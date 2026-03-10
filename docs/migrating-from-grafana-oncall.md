@@ -23,10 +23,9 @@ This guide maps OnCall concepts to PageFire equivalents and walks you through re
 | Outgoing Webhook | Webhook contact method | Event-driven outgoing webhooks are on the roadmap |
 | Team | Team | Create teams and manage membership via API |
 
-## What You'll Need
+## Prerequisites
 
 - Go 1.22+ (to build from source) or a [pre-built binary](https://github.com/pagefire/pagefire/releases)
-- A bearer token for API authentication
 - ~5 minutes
 
 ## Step 1: Start PageFire
@@ -46,29 +45,33 @@ make build
 
 # Option C: Docker
 docker run -d -p 3000:3000 \
-  -e PAGEFIRE_ADMIN_TOKEN=your-secret-token \
+  -e PAGEFIRE_ADMIN_TOKEN=change-me-to-something-secret \
   ghcr.io/pagefire/pagefire:latest
 ```
 
-Start the server:
+Pick an admin token — this is your API password for all requests. It can be any string you choose:
 
 ```bash
-PAGEFIRE_ADMIN_TOKEN=your-secret-token pagefire serve
+export PAGEFIRE_ADMIN_TOKEN="change-me-to-something-secret"
+pagefire serve
 ```
 
 PageFire uses SQLite by default. Your database is created automatically at `./pagefire.db`.
 
+For the rest of this guide, we'll use these variables:
+
+```bash
+TOKEN="$PAGEFIRE_ADMIN_TOKEN"
+API="http://localhost:3000/api/v1"
+```
+
 ## Step 2: Create Users
 
-In OnCall, users come from Grafana's user system. In PageFire, you create them directly.
+In OnCall, users come from Grafana's user system. In PageFire, you create them via the API.
 
 For each team member who was in your OnCall rotation:
 
 ```bash
-TOKEN="your-secret-token"
-API="http://localhost:3000/api/v1"
-
-# Create a user
 curl -s -X POST "$API/users" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -79,40 +82,44 @@ curl -s -X POST "$API/users" \
   }'
 ```
 
+Save the `id` from the response — you'll need it in the next steps.
+
 ## Step 3: Set Up Contact Methods and Notification Rules
 
 In OnCall, you configured "Personal Notification Rules" with steps like: Slack DM -> wait 5 min -> SMS -> wait 10 min -> phone call.
 
-In PageFire, you set up contact methods and notification rules per user:
+In PageFire, you set up contact methods (where to reach someone) and notification rules (when to use each method) per user:
 
 ```bash
 USER_ID="<user-id-from-step-2>"
 
 # Add a webhook contact method (replaces Slack/SMS/etc.)
-CM_ID=$(curl -s -X POST "$API/users/$USER_ID/contact-methods" \
+curl -s -X POST "$API/users/$USER_ID/contact-methods" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"type": "webhook", "value": "https://your-slack-webhook-url"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+  -d '{"type": "webhook", "value": "https://your-slack-webhook-url"}'
 
 # Add an email contact method
-EMAIL_CM_ID=$(curl -s -X POST "$API/users/$USER_ID/contact-methods" \
+curl -s -X POST "$API/users/$USER_ID/contact-methods" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"type": "email", "value": "alice@example.com"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+  -d '{"type": "email", "value": "alice@example.com"}'
+```
 
-# Notify via webhook immediately
+Then create notification rules to control timing. Use the `id` from each contact method response:
+
+```bash
+# Notify via webhook immediately when an alert fires
 curl -s -X POST "$API/users/$USER_ID/notification-rules" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"contact_method_id\": \"$CM_ID\", \"delay_minutes\": 0}"
+  -d '{"contact_method_id": "<webhook-cm-id>", "delay_minutes": 0}'
 
-# Notify via email after 5 minutes
+# Notify via email after 5 minutes if not acknowledged
 curl -s -X POST "$API/users/$USER_ID/notification-rules" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d "{\"contact_method_id\": \"$EMAIL_CM_ID\", \"delay_minutes\": 5}"
+  -d '{"contact_method_id": "<email-cm-id>", "delay_minutes": 5}'
 ```
 
 ### Notification channel mapping
@@ -120,38 +127,34 @@ curl -s -X POST "$API/users/$USER_ID/notification-rules" \
 | OnCall Channel | PageFire Equivalent |
 |---|---|
 | Slack DM | `webhook` pointed at a Slack incoming webhook URL |
-| Email | `email` (requires SMTP config: `PAGEFIRE_SMTP_*` env vars) |
+| Email | `email` (requires SMTP config — see below) |
 | SMS | `webhook` pointed at a Twilio API endpoint or similar |
 | Phone call | Not yet supported |
 | Telegram | `webhook` pointed at Telegram bot API |
 | Mobile push | `webhook` pointed at Pushover/ntfy/Gotify |
 
-Note: OnCall's Cloud Connection (which provides free SMS/phone/push) shuts down on March 24, 2026. If you were self-hosting Twilio for SMS, you can continue using it via a webhook contact method in PageFire.
+> **Note:** OnCall's Cloud Connection (which provided free SMS/phone/push) shuts down on March 24, 2026. If you were self-hosting Twilio for SMS, you can continue using it via a webhook contact method in PageFire.
 
 ## Step 4: Create an Escalation Policy
 
 OnCall's "Escalation Chains" map to PageFire's "Escalation Policies."
 
 ```bash
-# Create the policy (equivalent to an escalation chain)
+# Create the policy
 EP_ID=$(curl -s -X POST "$API/escalation-policies" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "Production Alerts", "repeat": 2}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 
-# Add step 1: notify on-call from schedule, re-escalate after 5 min
+# Add step 1: notify on-call user, re-escalate after 5 min if no response
 STEP1_ID=$(curl -s -X POST "$API/escalation-policies/$EP_ID/steps" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"step_number": 0, "delay_minutes": 5}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 
-# Target: on-call schedule (created in step 5)
-# curl -s -X POST "$API/escalation-policies/$EP_ID/steps/$STEP1_ID/targets" \
-#   -H "Authorization: Bearer $TOKEN" \
-#   -H "Content-Type: application/json" \
-#   -d '{"target_type": "schedule", "target_id": "<schedule-id>"}'
+# We'll add the schedule target in Step 5 after creating the schedule.
 
 # Add step 2: notify a specific user as backup
 STEP2_ID=$(curl -s -X POST "$API/escalation-policies/$EP_ID/steps" \
@@ -211,7 +214,7 @@ curl -s -X POST "$API/schedules/$SCHED_ID/rotations/$ROT_ID/participants" \
 # Add more participants at position 1, 2, etc.
 ```
 
-Now wire the schedule into your escalation policy (the step target from step 4):
+Now wire the schedule into your escalation policy (the step 1 target from Step 4):
 
 ```bash
 curl -s -X POST "$API/escalation-policies/$EP_ID/steps/$STEP1_ID/targets" \
@@ -242,17 +245,18 @@ SVC_ID=$(curl -s -X POST "$API/services" \
   -d "{\"name\": \"Production API\", \"escalation_policy_id\": \"$EP_ID\"}" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 
-# Create an integration key
-IK_SECRET=$(curl -s -X POST "$API/services/$SVC_ID/integration-keys" \
+# Create an integration key (the secret is only shown once)
+curl -s -X POST "$API/services/$SVC_ID/integration-keys" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "Grafana Alerting"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['secret'])")
-
-echo "Integration URL: http://localhost:3000/api/v1/integrations/$IK_SECRET/grafana"
+  -d '{"name": "Grafana Alerting"}'
 ```
 
-Save the secret. It is only shown once.
+Save the `secret` from the response — **it is only shown once**. This secret is the URL path for inbound alerts:
+
+```
+http://localhost:3000/api/v1/integrations/<secret>/grafana
+```
 
 ### Integration type mapping
 
@@ -266,7 +270,7 @@ Save the secret. It is only shown once.
 For OnCall integrations that don't have a native PageFire equivalent (Datadog, Sentry, etc.), use the generic webhook endpoint. Most monitoring tools can send a JSON payload with `summary`, `details`, and `dedup_key` fields:
 
 ```bash
-curl -X POST "http://localhost:3000/api/v1/integrations/$IK_SECRET/alerts" \
+curl -X POST "http://localhost:3000/api/v1/integrations/<secret>/alerts" \
   -H "Content-Type: application/json" \
   -d '{
     "summary": "High CPU on web-01",
@@ -279,18 +283,18 @@ curl -X POST "http://localhost:3000/api/v1/integrations/$IK_SECRET/alerts" \
 
 Point your existing alert sources at PageFire's integration URLs:
 
-**Grafana Alerting**: In Grafana, go to Alerting > Contact Points. Edit your OnCall contact point and change the URL to your PageFire Grafana integration endpoint.
+**Grafana Alerting:** In Grafana, go to Alerting > Contact Points. Edit your OnCall contact point and change the URL to your PageFire integration endpoint.
 
-**Prometheus Alertmanager**: Update your `alertmanager.yml`:
+**Prometheus Alertmanager:** Update your `alertmanager.yml`:
 
 ```yaml
 receivers:
   - name: pagefire
     webhook_configs:
-      - url: 'http://pagefire:3000/api/v1/integrations/<your-key>/prometheus'
+      - url: 'http://pagefire:3000/api/v1/integrations/<your-secret>/prometheus'
 ```
 
-**Other tools**: Replace the OnCall webhook URL with the PageFire generic webhook URL in your monitoring tool's notification settings.
+**Other tools:** Replace the OnCall webhook URL with the PageFire generic webhook URL in your monitoring tool's notification settings.
 
 ## Step 8: Test the Setup
 
@@ -304,7 +308,7 @@ curl -s "$API/oncall/$SCHED_ID" \
 Fire a test alert:
 
 ```bash
-curl -X POST "http://localhost:3000/api/v1/integrations/$IK_SECRET/alerts" \
+curl -X POST "http://localhost:3000/api/v1/integrations/<secret>/alerts" \
   -H "Content-Type: application/json" \
   -d '{"summary": "Test alert from migration", "dedup_key": "migration-test"}'
 ```
@@ -326,10 +330,10 @@ curl -s "$API/alerts" \
 - Escalation policies loop through steps and repeat
 
 ### Things that work differently
-- **No Grafana dependency**: PageFire is standalone. No Grafana plugin needed.
-- **No Celery/Redis/Postgres**: Single binary, SQLite. Nothing else to manage.
-- **API-first**: No UI yet (on the roadmap). Everything is done via REST API.
-- **Bearer token auth**: Single admin token instead of Grafana's user system. Per-user API tokens on the roadmap.
+- **No Grafana dependency:** PageFire is standalone. No Grafana plugin needed.
+- **No Celery/Redis/Postgres:** Single binary, SQLite. Nothing else to manage.
+- **API-first:** No UI yet (on the roadmap). Everything is done via REST API.
+- **Single admin token:** Instead of Grafana's user system, you set one API token via `PAGEFIRE_ADMIN_TOKEN` and include it in all requests. Per-user API tokens are on the roadmap.
 
 ### Features on the roadmap
 - Content-based alert routing (OnCall's "Routes")
@@ -345,7 +349,7 @@ curl -s "$API/alerts" \
 
 | Variable | Default | Description |
 |---|---|---|
-| `PAGEFIRE_ADMIN_TOKEN` | *(required)* | Bearer token for API auth |
+| `PAGEFIRE_ADMIN_TOKEN` | *(required)* | API token — include as `Authorization: Bearer <value>` in all requests |
 | `PAGEFIRE_PORT` | `3000` | HTTP listen port |
 | `PAGEFIRE_DATABASE_URL` | `./pagefire.db` | SQLite database path |
 | `PAGEFIRE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |

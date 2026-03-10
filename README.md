@@ -14,84 +14,149 @@ Open-source incident management platform. On-call scheduling, alert escalation, 
 
 **Pre-release / active development.** Not yet ready for production use.
 
-Current: on-call engine, alert escalation, notification dispatch (email, webhook, Slack).
+Current: on-call engine, alert escalation, teams, notification dispatch (email, webhook, Slack).
 
 ## Quick Start
+
+### 1. Build
 
 Requires Go 1.22+.
 
 ```bash
-# Build
 make build
+```
 
-# Run (SQLite, port 3000)
-PAGEFIRE_ADMIN_TOKEN=your-secret-token ./bin/pagefire serve
+Or download a [pre-built binary](https://github.com/pagefire/pagefire/releases) for your platform.
 
-# Or use go run
-PAGEFIRE_ADMIN_TOKEN=your-secret-token make dev
+### 2. Pick an admin token
 
-# Run tests
+PageFire uses a single shared API token for authentication. You choose it — it can be any string. Every API request must include this token.
+
+```bash
+export PAGEFIRE_ADMIN_TOKEN="change-me-to-something-secret"
+```
+
+### 3. Start the server
+
+```bash
+./bin/pagefire serve
+# Or: make dev
+```
+
+PageFire starts on port 3000 and creates a SQLite database at `./pagefire.db`.
+
+### 4. Make your first API call
+
+```bash
+# Health check (no auth required)
+curl http://localhost:3000/healthz
+
+# Create a user (auth required)
+curl -X POST http://localhost:3000/api/v1/users \
+  -H "Authorization: Bearer $PAGEFIRE_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alice", "email": "alice@example.com"}'
+```
+
+All API endpoints require the header `Authorization: Bearer <your-token>` except the health check and inbound integration webhooks.
+
+### 5. Run tests
+
+```bash
 make test
 ```
 
 ## Configuration
 
-All configuration via environment variables with `PAGEFIRE_` prefix:
+All configuration is via environment variables with the `PAGEFIRE_` prefix.
+
+### Required
+
+| Variable | Description |
+|----------|-------------|
+| `PAGEFIRE_ADMIN_TOKEN` | API token for authentication. You choose this value. All API requests must include `Authorization: Bearer <this-value>`. |
+
+### Server
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PAGEFIRE_PORT` | `3000` | HTTP listen port |
-| `PAGEFIRE_ADMIN_TOKEN` | *(required)* | Bearer token for API authentication |
-| `PAGEFIRE_DATABASE_DRIVER` | `sqlite` | `sqlite` (postgres planned) |
+| `PAGEFIRE_DATABASE_DRIVER` | `sqlite` | Database driver (`sqlite`; Postgres planned) |
 | `PAGEFIRE_DATABASE_URL` | `./pagefire.db` | Database connection string |
 | `PAGEFIRE_DATA_DIR` | `.` | Data directory for SQLite |
 | `PAGEFIRE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
-| `PAGEFIRE_SMTP_HOST` | — | SMTP server for email notifications |
+| `PAGEFIRE_ENGINE_INTERVAL_SECONDS` | `5` | How often the engine processes alerts |
+| `PAGEFIRE_ALLOW_PRIVATE_WEBHOOKS` | `false` | Allow outbound webhooks to private/localhost IPs (useful for local dev) |
+
+### Email notifications (SMTP)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PAGEFIRE_SMTP_HOST` | — | SMTP server hostname |
 | `PAGEFIRE_SMTP_PORT` | `587` | SMTP port |
 | `PAGEFIRE_SMTP_FROM` | — | Sender email address |
 | `PAGEFIRE_SMTP_USERNAME` | — | SMTP auth username |
 | `PAGEFIRE_SMTP_PASSWORD` | — | SMTP auth password |
+
+### Slack notifications
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `PAGEFIRE_SLACK_BOT_TOKEN` | — | Slack bot token for DM notifications |
 
 ## API
 
-All endpoints require `Authorization: Bearer <PAGEFIRE_ADMIN_TOKEN>` except health check and integration webhooks.
+All endpoints require `Authorization: Bearer <your-token>` except health check and integration webhooks.
 
 ```
 GET  /healthz                                    # Health check (no auth)
 
-POST /api/v1/integrations/{key}/alerts           # Generic webhook (auth by key)
+# Inbound integrations (authenticated by integration key, not admin token)
+POST /api/v1/integrations/{key}/alerts           # Generic webhook
 POST /api/v1/integrations/{key}/grafana          # Grafana webhook
-POST /api/v1/integrations/{key}/prometheus        # Prometheus Alertmanager webhook
+POST /api/v1/integrations/{key}/prometheus       # Prometheus Alertmanager webhook
 
+# Teams
+GET/POST       /api/v1/teams
+GET/PUT/DELETE /api/v1/teams/{id}
+POST/GET       /api/v1/teams/{id}/members
+DELETE         /api/v1/teams/{id}/members/{userID}
+
+# Users
 GET/POST       /api/v1/users
 GET/PUT        /api/v1/users/{id}
 POST           /api/v1/users/{id}/contact-methods
 POST           /api/v1/users/{id}/notification-rules
 
+# Services (supports ?team_id= filter)
 GET/POST       /api/v1/services
 GET/PUT/DELETE /api/v1/services/{id}
 GET/POST       /api/v1/services/{id}/integration-keys
 
+# Escalation Policies (supports ?team_id= filter)
 GET/POST       /api/v1/escalation-policies
 GET/PUT/DELETE /api/v1/escalation-policies/{id}
 GET/POST       /api/v1/escalation-policies/{id}/steps
 GET/POST       /api/v1/escalation-policies/{id}/steps/{stepID}/targets
 
+# Schedules (supports ?team_id= filter)
 GET/POST       /api/v1/schedules
 GET/PUT/DELETE /api/v1/schedules/{id}
 GET/POST       /api/v1/schedules/{id}/rotations
 GET/POST       /api/v1/schedules/{id}/overrides
 
+# Alerts
 GET/POST       /api/v1/alerts
 GET            /api/v1/alerts/{id}
 POST           /api/v1/alerts/{id}/acknowledge
 POST           /api/v1/alerts/{id}/resolve
 
+# Incidents
 GET/POST       /api/v1/incidents
 GET/PUT        /api/v1/incidents/{id}
 GET/POST       /api/v1/incidents/{id}/updates
 
+# On-Call
 GET            /api/v1/oncall/{scheduleID}
 ```
 
@@ -112,11 +177,11 @@ internal/
 
 ## Demo
 
-Two demo scripts are included to exercise PageFire end-to-end.
+Two demo scripts exercise PageFire end-to-end.
 
 ### Single-user demo (`demo/demo.sh`)
 
-Starts PageFire, a fake app, and a notification receiver. A health checker polls the app every 5 seconds. Kill the app to trigger an alert and get paged; restart it to auto-resolve.
+Starts PageFire, a fake app, and a notification receiver. A health checker polls the app every 5 seconds. Kill the app to trigger an alert; restart it to auto-resolve.
 
 ```bash
 ./demo/demo.sh
@@ -152,7 +217,7 @@ Both scripts clean up all processes and temp files on exit (Ctrl+C).
 ## Security
 
 Hardened against STRIDE threat model findings:
-- Bearer token auth with constant-time comparison
+- API token auth with constant-time comparison
 - Per-IP rate limiting (60/min integration, 1000/min API)
 - SSRF protection on all outbound webhooks
 - Email header injection prevention
