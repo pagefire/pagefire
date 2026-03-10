@@ -1,0 +1,149 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"time"
+)
+
+// Sentinel errors for store operations.
+var (
+	ErrNotFound     = errors.New("not found")
+	ErrDuplicateKey = errors.New("duplicate key")
+	ErrConflict     = errors.New("conflict")
+)
+
+// Store is the top-level repository interface. Each sub-store is accessed via
+// a method so implementations can share a single database connection.
+type Store interface {
+	// Shared Platform (v0.1)
+	Users() UserStore
+	Notifications() NotificationStore
+	Incidents() IncidentStore
+
+	// Pillar 1: On-Call (v0.1)
+	Alerts() AlertStore
+	Services() ServiceStore
+	EscalationPolicies() EscalationPolicyStore
+	Schedules() ScheduleStore
+
+	// Lifecycle
+	Migrate(ctx context.Context) error
+	Close() error
+}
+
+// UserStore manages users, contact methods, and notification rules.
+type UserStore interface {
+	Create(ctx context.Context, u *User) error
+	Get(ctx context.Context, id string) (*User, error)
+	GetByEmail(ctx context.Context, email string) (*User, error)
+	List(ctx context.Context) ([]User, error)
+	Update(ctx context.Context, u *User) error
+	Delete(ctx context.Context, id string) error
+
+	CreateContactMethod(ctx context.Context, cm *ContactMethod) error
+	ListContactMethods(ctx context.Context, userID string) ([]ContactMethod, error)
+	DeleteContactMethod(ctx context.Context, id string) error
+
+	CreateNotificationRule(ctx context.Context, nr *NotificationRule) error
+	ListNotificationRules(ctx context.Context, userID string) ([]NotificationRule, error)
+	DeleteNotificationRule(ctx context.Context, id string) error
+}
+
+// ServiceStore manages services and integration keys.
+type ServiceStore interface {
+	Create(ctx context.Context, s *Service) error
+	Get(ctx context.Context, id string) (*Service, error)
+	List(ctx context.Context) ([]Service, error)
+	Update(ctx context.Context, s *Service) error
+	Delete(ctx context.Context, id string) error
+
+	CreateIntegrationKey(ctx context.Context, ik *IntegrationKey) error
+	ListIntegrationKeys(ctx context.Context, serviceID string) ([]IntegrationKey, error)
+	GetIntegrationKeyBySecret(ctx context.Context, secret string) (*IntegrationKey, error)
+	DeleteIntegrationKey(ctx context.Context, id string) error
+}
+
+// EscalationPolicyStore manages escalation policies, steps, and targets.
+type EscalationPolicyStore interface {
+	Create(ctx context.Context, ep *EscalationPolicy) error
+	Get(ctx context.Context, id string) (*EscalationPolicy, error)
+	List(ctx context.Context) ([]EscalationPolicy, error)
+	Update(ctx context.Context, ep *EscalationPolicy) error
+	Delete(ctx context.Context, id string) error
+
+	CreateStep(ctx context.Context, step *EscalationStep) error
+	ListSteps(ctx context.Context, policyID string) ([]EscalationStep, error)
+	DeleteStep(ctx context.Context, id string) error
+
+	CreateStepTarget(ctx context.Context, target *EscalationStepTarget) error
+	ListStepTargets(ctx context.Context, stepID string) ([]EscalationStepTarget, error)
+	DeleteStepTarget(ctx context.Context, id string) error
+
+	// GetFullPolicy returns a snapshot of the entire escalation policy tree,
+	// suitable for serializing as JSON on an alert (ADR-9).
+	GetFullPolicy(ctx context.Context, id string) (*EscalationSnapshot, error)
+}
+
+// ScheduleStore manages schedules, rotations, participants, and overrides.
+type ScheduleStore interface {
+	Create(ctx context.Context, s *Schedule) error
+	Get(ctx context.Context, id string) (*Schedule, error)
+	List(ctx context.Context) ([]Schedule, error)
+	Update(ctx context.Context, s *Schedule) error
+	Delete(ctx context.Context, id string) error
+
+	CreateRotation(ctx context.Context, r *Rotation) error
+	GetRotation(ctx context.Context, id string) (*Rotation, error)
+	ListRotations(ctx context.Context, scheduleID string) ([]Rotation, error)
+	DeleteRotation(ctx context.Context, id string) error
+
+	CreateParticipant(ctx context.Context, p *RotationParticipant) error
+	ListParticipants(ctx context.Context, rotationID string) ([]RotationParticipant, error)
+	DeleteParticipant(ctx context.Context, id string) error
+
+	CreateOverride(ctx context.Context, o *ScheduleOverride) error
+	ListOverrides(ctx context.Context, scheduleID string) ([]ScheduleOverride, error)
+	ListActiveOverrides(ctx context.Context, scheduleID string, at time.Time) ([]ScheduleOverride, error)
+	DeleteOverride(ctx context.Context, id string) error
+}
+
+// AlertStore manages alerts and alert logs.
+type AlertStore interface {
+	Create(ctx context.Context, a *Alert) error
+	Get(ctx context.Context, id string) (*Alert, error)
+	List(ctx context.Context, filter AlertFilter) ([]Alert, error)
+	Acknowledge(ctx context.Context, id string, userID string) error
+	Resolve(ctx context.Context, id string) error
+
+	// FindPendingEscalations returns triggered alerts whose next_escalation_at <= before.
+	FindPendingEscalations(ctx context.Context, before time.Time) ([]Alert, error)
+	UpdateEscalationStep(ctx context.Context, id string, step int, loopCount int, nextAt time.Time) error
+
+	CreateLog(ctx context.Context, log *AlertLog) error
+	ListLogs(ctx context.Context, alertID string) ([]AlertLog, error)
+}
+
+// NotificationStore manages the notification dispatch queue.
+type NotificationStore interface {
+	Enqueue(ctx context.Context, n *Notification) error
+	FindPending(ctx context.Context, limit int) ([]Notification, error)
+	MarkSending(ctx context.Context, id string) error
+	MarkSent(ctx context.Context, id string, providerID string) error
+	MarkFailed(ctx context.Context, id string) error
+	IncrementAttempts(ctx context.Context, id string, nextAt time.Time) error
+}
+
+// IncidentStore manages incidents and incident updates.
+type IncidentStore interface {
+	Create(ctx context.Context, inc *Incident) error
+	Get(ctx context.Context, id string) (*Incident, error)
+	List(ctx context.Context, filter IncidentFilter) ([]Incident, error)
+	Update(ctx context.Context, inc *Incident) error
+
+	AddService(ctx context.Context, incidentID, serviceID string) error
+	ListServices(ctx context.Context, incidentID string) ([]string, error)
+
+	CreateUpdate(ctx context.Context, u *IncidentUpdate) error
+	ListUpdates(ctx context.Context, incidentID string) ([]IncidentUpdate, error)
+}

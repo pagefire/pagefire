@@ -1,0 +1,9 @@
+bin/
+*.db
+*.sqlite
+*.db-shm
+*.db-wal
+tmp/
+.env
+.env.*
+.DS_Store
