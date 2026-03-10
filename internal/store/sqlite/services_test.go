@@ -371,3 +371,145 @@ func TestDeleteServiceCascadesIntegrationKeys(t *testing.T) {
 		t.Fatalf("expected 0 keys after cascade delete, got %d", len(keys))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Routing rule tests
+// ---------------------------------------------------------------------------
+
+func TestRoutingRuleCreateAndList(t *testing.T) {
+	s := newTestStore(t)
+	services := s.Services()
+	ctx := context.Background()
+	svc := createTestService(t, s)
+	epDB := createTestEscalationPolicy(t, s, "DB EP")
+	epCrit := createTestEscalationPolicy(t, s, "Critical EP")
+
+	// Empty list.
+	rules, err := services.ListRoutingRules(ctx, svc.ID)
+	if err != nil {
+		t.Fatalf("ListRoutingRules empty: %v", err)
+	}
+	if len(rules) != 0 {
+		t.Fatalf("expected 0 rules, got %d", len(rules))
+	}
+
+	// Create two rules with different priorities.
+	rule1 := &store.RoutingRule{
+		ServiceID:          svc.ID,
+		Priority:           1,
+		ConditionField:     "summary",
+		ConditionMatchType: "contains",
+		ConditionValue:     "database",
+		EscalationPolicyID: epDB.ID,
+	}
+	if err := services.CreateRoutingRule(ctx, rule1); err != nil {
+		t.Fatalf("CreateRoutingRule: %v", err)
+	}
+	if rule1.ID == "" {
+		t.Fatal("expected ID to be auto-generated")
+	}
+
+	rule0 := &store.RoutingRule{
+		ServiceID:          svc.ID,
+		Priority:           0,
+		ConditionField:     "summary",
+		ConditionMatchType: "regex",
+		ConditionValue:     "^CRITICAL:",
+		EscalationPolicyID: epCrit.ID,
+	}
+	if err := services.CreateRoutingRule(ctx, rule0); err != nil {
+		t.Fatalf("CreateRoutingRule: %v", err)
+	}
+
+	rules, err = services.ListRoutingRules(ctx, svc.ID)
+	if err != nil {
+		t.Fatalf("ListRoutingRules: %v", err)
+	}
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 rules, got %d", len(rules))
+	}
+	// Should be ordered by priority.
+	if rules[0].Priority != 0 {
+		t.Errorf("first rule priority = %d, want 0", rules[0].Priority)
+	}
+	if rules[1].Priority != 1 {
+		t.Errorf("second rule priority = %d, want 1", rules[1].Priority)
+	}
+	if rules[0].ConditionMatchType != "regex" {
+		t.Errorf("first rule match type = %q, want %q", rules[0].ConditionMatchType, "regex")
+	}
+}
+
+func TestRoutingRuleDelete(t *testing.T) {
+	s := newTestStore(t)
+	services := s.Services()
+	ctx := context.Background()
+	svc := createTestService(t, s)
+	ep := createTestEscalationPolicy(t, s, "Test EP")
+
+	rule := &store.RoutingRule{
+		ServiceID:          svc.ID,
+		Priority:           0,
+		ConditionField:     "summary",
+		ConditionMatchType: "contains",
+		ConditionValue:     "test",
+		EscalationPolicyID: ep.ID,
+	}
+	if err := services.CreateRoutingRule(ctx, rule); err != nil {
+		t.Fatalf("CreateRoutingRule: %v", err)
+	}
+
+	if err := services.DeleteRoutingRule(ctx, rule.ID); err != nil {
+		t.Fatalf("DeleteRoutingRule: %v", err)
+	}
+
+	rules, err := services.ListRoutingRules(ctx, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 0 {
+		t.Fatalf("expected 0 rules after delete, got %d", len(rules))
+	}
+}
+
+func TestRoutingRuleDeleteNotFound(t *testing.T) {
+	s := newTestStore(t)
+	services := s.Services()
+	ctx := context.Background()
+
+	err := services.DeleteRoutingRule(ctx, "nonexistent")
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("DeleteRoutingRule nonexistent: got err %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteServiceCascadesRoutingRules(t *testing.T) {
+	s := newTestStore(t)
+	services := s.Services()
+	ctx := context.Background()
+	svc := createTestService(t, s)
+	ep := createTestEscalationPolicy(t, s, "Cascade EP")
+
+	if err := services.CreateRoutingRule(ctx, &store.RoutingRule{
+		ServiceID:          svc.ID,
+		Priority:           0,
+		ConditionField:     "summary",
+		ConditionMatchType: "contains",
+		ConditionValue:     "test",
+		EscalationPolicyID: ep.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := services.Delete(ctx, svc.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rules, err := services.ListRoutingRules(ctx, svc.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rules) != 0 {
+		t.Fatalf("expected 0 rules after cascade delete, got %d", len(rules))
+	}
+}

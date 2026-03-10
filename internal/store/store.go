@@ -78,6 +78,10 @@ type ServiceStore interface {
 	ListIntegrationKeys(ctx context.Context, serviceID string) ([]IntegrationKey, error)
 	GetIntegrationKeyBySecret(ctx context.Context, secret string) (*IntegrationKey, error)
 	DeleteIntegrationKey(ctx context.Context, id string) error
+
+	CreateRoutingRule(ctx context.Context, rule *RoutingRule) error
+	ListRoutingRules(ctx context.Context, serviceID string) ([]RoutingRule, error)
+	DeleteRoutingRule(ctx context.Context, id string) error
 }
 
 // EscalationPolicyStore manages escalation policies, steps, and targets.

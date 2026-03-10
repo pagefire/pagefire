@@ -157,3 +157,47 @@ func (s *serviceStore) DeleteIntegrationKey(ctx context.Context, id string) erro
 	}
 	return nil
 }
+
+func (s *serviceStore) CreateRoutingRule(ctx context.Context, rule *store.RoutingRule) error {
+	if rule.ID == "" {
+		rule.ID = uuid.NewString()
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO routing_rules (id, service_id, priority, condition_field, condition_match_type, condition_value, escalation_policy_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		rule.ID, rule.ServiceID, rule.Priority, rule.ConditionField, rule.ConditionMatchType, rule.ConditionValue, rule.EscalationPolicyID,
+	)
+	return err
+}
+
+func (s *serviceStore) ListRoutingRules(ctx context.Context, serviceID string) ([]store.RoutingRule, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, service_id, priority, condition_field, condition_match_type, condition_value, escalation_policy_id, created_at FROM routing_rules WHERE service_id = ? ORDER BY priority`,
+		serviceID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rules []store.RoutingRule
+	for rows.Next() {
+		var r store.RoutingRule
+		if err := rows.Scan(&r.ID, &r.ServiceID, &r.Priority, &r.ConditionField, &r.ConditionMatchType, &r.ConditionValue, &r.EscalationPolicyID, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		rules = append(rules, r)
+	}
+	return rules, rows.Err()
+}
+
+func (s *serviceStore) DeleteRoutingRule(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM routing_rules WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}

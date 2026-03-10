@@ -685,3 +685,251 @@ func TestTeamsRequireAuth(t *testing.T) {
 		t.Fatalf("GET /api/v1/teams without auth: want 401, got %d", rr.Code)
 	}
 }
+
+// --- Routing rule API tests ---
+
+func createTestEP(t *testing.T, router http.Handler) string {
+	t.Helper()
+	body := map[string]any{"name": "EP-" + t.Name(), "repeat": 0}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/escalation-policies", body, testToken)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("setup: create EP got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var ep map[string]any
+	decodeBody(t, rr, &ep)
+	return ep["id"].(string)
+}
+
+func TestCreateRoutingRule(t *testing.T) {
+	router, _ := newTestRouter(t)
+	svcID := createTestService(t, router)
+	epID := createTestEP(t, router)
+
+	body := map[string]any{
+		"condition_field":      "summary",
+		"condition_match_type": "contains",
+		"condition_value":      "database",
+		"escalation_policy_id": epID,
+		"priority":             0,
+	}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/services/"+svcID+"/routing-rules", body, testToken)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("POST routing-rules: want 201, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var rule map[string]any
+	decodeBody(t, rr, &rule)
+	if rule["id"] == nil || rule["id"] == "" {
+		t.Fatal("response missing id")
+	}
+	if rule["condition_field"] != "summary" {
+		t.Errorf("condition_field = %q, want %q", rule["condition_field"], "summary")
+	}
+}
+
+func TestCreateRoutingRuleInvalidField(t *testing.T) {
+	router, _ := newTestRouter(t)
+	svcID := createTestService(t, router)
+	epID := createTestEP(t, router)
+
+	body := map[string]any{
+		"condition_field":      "invalid",
+		"condition_match_type": "contains",
+		"condition_value":      "test",
+		"escalation_policy_id": epID,
+	}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/services/"+svcID+"/routing-rules", body, testToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("POST routing-rules invalid field: want 400, got %d", rr.Code)
+	}
+}
+
+func TestCreateRoutingRuleInvalidMatchType(t *testing.T) {
+	router, _ := newTestRouter(t)
+	svcID := createTestService(t, router)
+	epID := createTestEP(t, router)
+
+	body := map[string]any{
+		"condition_field":      "summary",
+		"condition_match_type": "exact",
+		"condition_value":      "test",
+		"escalation_policy_id": epID,
+	}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/services/"+svcID+"/routing-rules", body, testToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("POST routing-rules invalid match type: want 400, got %d", rr.Code)
+	}
+}
+
+func TestCreateRoutingRuleMissingValue(t *testing.T) {
+	router, _ := newTestRouter(t)
+	svcID := createTestService(t, router)
+	epID := createTestEP(t, router)
+
+	body := map[string]any{
+		"condition_field":      "summary",
+		"condition_match_type": "contains",
+		"condition_value":      "",
+		"escalation_policy_id": epID,
+	}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/services/"+svcID+"/routing-rules", body, testToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("POST routing-rules missing value: want 400, got %d", rr.Code)
+	}
+}
+
+func TestCreateRoutingRuleMissingEP(t *testing.T) {
+	router, _ := newTestRouter(t)
+	svcID := createTestService(t, router)
+
+	body := map[string]any{
+		"condition_field":      "summary",
+		"condition_match_type": "contains",
+		"condition_value":      "test",
+	}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/services/"+svcID+"/routing-rules", body, testToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("POST routing-rules missing EP: want 400, got %d", rr.Code)
+	}
+}
+
+func TestListRoutingRules(t *testing.T) {
+	router, _ := newTestRouter(t)
+	svcID := createTestService(t, router)
+	epID := createTestEP(t, router)
+
+	// Empty list.
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/services/"+svcID+"/routing-rules", nil, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET routing-rules: want 200, got %d", rr.Code)
+	}
+
+	// Create a rule then list again.
+	body := map[string]any{
+		"condition_field":      "summary",
+		"condition_match_type": "contains",
+		"condition_value":      "test",
+		"escalation_policy_id": epID,
+	}
+	doRequest(t, router, http.MethodPost, "/api/v1/services/"+svcID+"/routing-rules", body, testToken)
+
+	rr = doRequest(t, router, http.MethodGet, "/api/v1/services/"+svcID+"/routing-rules", nil, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET routing-rules: want 200, got %d", rr.Code)
+	}
+	var rules []map[string]any
+	decodeBody(t, rr, &rules)
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+}
+
+func TestDeleteRoutingRule(t *testing.T) {
+	router, _ := newTestRouter(t)
+	svcID := createTestService(t, router)
+	epID := createTestEP(t, router)
+
+	// Create a rule.
+	body := map[string]any{
+		"condition_field":      "summary",
+		"condition_match_type": "contains",
+		"condition_value":      "test",
+		"escalation_policy_id": epID,
+	}
+	createRR := doRequest(t, router, http.MethodPost, "/api/v1/services/"+svcID+"/routing-rules", body, testToken)
+	var rule map[string]any
+	decodeBody(t, createRR, &rule)
+	ruleID := rule["id"].(string)
+
+	// Delete it.
+	rr := doRequest(t, router, http.MethodDelete, "/api/v1/services/"+svcID+"/routing-rules/"+ruleID, nil, testToken)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("DELETE routing-rule: want 204, got %d", rr.Code)
+	}
+
+	// Verify empty.
+	listRR := doRequest(t, router, http.MethodGet, "/api/v1/services/"+svcID+"/routing-rules", nil, testToken)
+	var rules []map[string]any
+	decodeBody(t, listRR, &rules)
+	if len(rules) != 0 {
+		t.Fatalf("expected 0 rules after delete, got %d", len(rules))
+	}
+}
+
+func TestRoutingIntegration(t *testing.T) {
+	router, s := newTestRouter(t)
+	ctx := context.Background()
+
+	// Create two escalation policies.
+	epDefault := &store.EscalationPolicy{Name: "Default EP"}
+	if err := s.EscalationPolicies().Create(ctx, epDefault); err != nil {
+		t.Fatal(err)
+	}
+	epDB := &store.EscalationPolicy{Name: "Database EP"}
+	if err := s.EscalationPolicies().Create(ctx, epDB); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create service with default EP.
+	svc := &store.Service{Name: "API", EscalationPolicyID: epDefault.ID}
+	if err := s.Services().Create(ctx, svc); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create integration key.
+	ik := &store.IntegrationKey{ServiceID: svc.ID, Name: "test", Type: "generic"}
+	if err := s.Services().CreateIntegrationKey(ctx, ik); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add routing rule: summary contains "database" → use DB EP.
+	if err := s.Services().CreateRoutingRule(ctx, &store.RoutingRule{
+		ServiceID:          svc.ID,
+		Priority:           0,
+		ConditionField:     "summary",
+		ConditionMatchType: "contains",
+		ConditionValue:     "database",
+		EscalationPolicyID: epDB.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Send alert matching routing rule.
+	body := map[string]string{
+		"summary":   "database connection timeout",
+		"details":   "pg pool exhausted",
+		"dedup_key": "db-timeout-1",
+	}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/integrations/"+ik.Secret+"/alerts", body, "")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("POST alert: want 201, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var alert map[string]any
+	decodeBody(t, rr, &alert)
+
+	// Verify the alert used the DB escalation policy (not default).
+	snapshot := alert["escalation_policy_snapshot"].(string)
+	if !strings.Contains(snapshot, epDB.ID) {
+		t.Errorf("alert should use DB EP (%s), snapshot: %s", epDB.ID, snapshot)
+	}
+	if strings.Contains(snapshot, epDefault.ID) {
+		t.Errorf("alert should NOT use default EP (%s), snapshot: %s", epDefault.ID, snapshot)
+	}
+
+	// Send alert NOT matching any rule — should use default EP.
+	body2 := map[string]string{
+		"summary":   "high CPU on web-01",
+		"details":   "cpu at 95%",
+		"dedup_key": "cpu-web-1",
+	}
+	rr2 := doRequest(t, router, http.MethodPost, "/api/v1/integrations/"+ik.Secret+"/alerts", body2, "")
+	if rr2.Code != http.StatusCreated {
+		t.Fatalf("POST alert 2: want 201, got %d; body: %s", rr2.Code, rr2.Body.String())
+	}
+	var alert2 map[string]any
+	decodeBody(t, rr2, &alert2)
+
+	snapshot2 := alert2["escalation_policy_snapshot"].(string)
+	if !strings.Contains(snapshot2, epDefault.ID) {
+		t.Errorf("alert2 should use default EP (%s), snapshot: %s", epDefault.ID, snapshot2)
+	}
+}

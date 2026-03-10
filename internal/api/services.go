@@ -30,6 +30,10 @@ func (h *ServiceHandler) Routes() chi.Router {
 	r.Post("/{id}/integration-keys", h.createIntegrationKey)
 	r.Delete("/{id}/integration-keys/{keyID}", h.deleteIntegrationKey)
 
+	r.Get("/{id}/routing-rules", h.listRoutingRules)
+	r.Post("/{id}/routing-rules", h.createRoutingRule)
+	r.Delete("/{id}/routing-rules/{ruleID}", h.deleteRoutingRule)
+
 	return r
 }
 
@@ -160,6 +164,58 @@ func (h *ServiceHandler) createIntegrationKey(w http.ResponseWriter, r *http.Req
 
 func (h *ServiceHandler) deleteIntegrationKey(w http.ResponseWriter, r *http.Request) {
 	if err := h.services.DeleteIntegrationKey(r.Context(), chi.URLParam(r, "keyID")); err != nil {
+		handleStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Routing rules ---
+
+var validConditionFields = map[string]bool{"summary": true, "details": true, "source": true}
+var validConditionMatchTypes = map[string]bool{"contains": true, "regex": true}
+
+func (h *ServiceHandler) listRoutingRules(w http.ResponseWriter, r *http.Request) {
+	rules, err := h.services.ListRoutingRules(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		handleStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rules)
+}
+
+func (h *ServiceHandler) createRoutingRule(w http.ResponseWriter, r *http.Request) {
+	var rule store.RoutingRule
+	if err := decodeJSON(w, r, &rule); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	rule.ServiceID = chi.URLParam(r, "id")
+	if !validConditionFields[rule.ConditionField] {
+		writeError(w, http.StatusBadRequest, "condition_field must be summary, details, or source")
+		return
+	}
+	if !validConditionMatchTypes[rule.ConditionMatchType] {
+		writeError(w, http.StatusBadRequest, "condition_match_type must be contains or regex")
+		return
+	}
+	if rule.ConditionValue == "" {
+		writeError(w, http.StatusBadRequest, "condition_value is required")
+		return
+	}
+	if rule.EscalationPolicyID == "" {
+		writeError(w, http.StatusBadRequest, "escalation_policy_id is required")
+		return
+	}
+	if err := h.services.CreateRoutingRule(r.Context(), &rule); err != nil {
+		handleStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, rule)
+}
+
+func (h *ServiceHandler) deleteRoutingRule(w http.ResponseWriter, r *http.Request) {
+	if err := h.services.DeleteRoutingRule(r.Context(), chi.URLParam(r, "ruleID")); err != nil {
 		handleStoreError(w, err)
 		return
 	}

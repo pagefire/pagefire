@@ -279,6 +279,21 @@ type TargetSnapshot struct {
 	TargetName string `json:"target_name"`
 }
 
+// RoutingRule defines a content-based routing rule for a service.
+// Rules are evaluated in priority order; the first match determines
+// which escalation policy is used. If no rule matches, the service's
+// default escalation_policy_id is used.
+type RoutingRule struct {
+	ID                 string    `json:"id"`
+	ServiceID          string    `json:"service_id"`
+	Priority           int       `json:"priority"`
+	ConditionField     string    `json:"condition_field"`     // "summary", "details", "source"
+	ConditionMatchType string    `json:"condition_match_type"` // "contains", "regex"
+	ConditionValue     string    `json:"condition_value"`
+	EscalationPolicyID string    `json:"escalation_policy_id"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
 // Filter types for list queries.
 
 type AlertFilter struct {

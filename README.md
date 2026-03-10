@@ -132,6 +132,8 @@ POST           /api/v1/users/{id}/notification-rules
 GET/POST       /api/v1/services
 GET/PUT/DELETE /api/v1/services/{id}
 GET/POST       /api/v1/services/{id}/integration-keys
+GET/POST       /api/v1/services/{id}/routing-rules
+DELETE         /api/v1/services/{id}/routing-rules/{ruleID}
 
 # Escalation Policies (supports ?team_id= filter)
 GET/POST       /api/v1/escalation-policies

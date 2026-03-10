@@ -136,7 +136,11 @@ func (h *IntegrationHandler) createAlertFromIntegration(r *http.Request, ik *sto
 		return nil, err
 	}
 
-	snapshot, err := h.escalation.GetFullPolicy(r.Context(), svc.EscalationPolicyID)
+	// Evaluate routing rules to determine which escalation policy to use.
+	rules, _ := h.services.ListRoutingRules(r.Context(), svc.ID)
+	epID := routeAlert(svc, rules, summary, details, "integration")
+
+	snapshot, err := h.escalation.GetFullPolicy(r.Context(), epID)
 	if err != nil {
 		return nil, err
 	}

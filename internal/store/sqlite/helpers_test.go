@@ -35,6 +35,16 @@ func createTestUser(t *testing.T, s *SQLiteStore, name, email string) *store.Use
 	return u
 }
 
+// createTestEscalationPolicy creates an escalation policy and returns it.
+func createTestEscalationPolicy(t *testing.T, s *SQLiteStore, name string) *store.EscalationPolicy {
+	t.Helper()
+	ep := &store.EscalationPolicy{Name: name}
+	if err := s.EscalationPolicies().Create(context.Background(), ep); err != nil {
+		t.Fatalf("creating test escalation policy: %v", err)
+	}
+	return ep
+}
+
 // createTestService creates a service with a dummy escalation policy ID.
 func createTestService(t *testing.T, s *SQLiteStore) *store.Service {
 	t.Helper()
