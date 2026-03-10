@@ -72,7 +72,13 @@ func (h *ScheduleHandler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ScheduleHandler) list(w http.ResponseWriter, r *http.Request) {
-	schedules, err := h.schedules.List(r.Context())
+	var schedules []store.Schedule
+	var err error
+	if teamID := r.URL.Query().Get("team_id"); teamID != "" {
+		schedules, err = h.schedules.ListByTeam(r.Context(), teamID)
+	} else {
+		schedules, err = h.schedules.List(r.Context())
+	}
 	if err != nil {
 		handleStoreError(w, err)
 		return

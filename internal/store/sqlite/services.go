@@ -19,8 +19,8 @@ func (s *serviceStore) Create(ctx context.Context, svc *store.Service) error {
 		svc.ID = uuid.NewString()
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO services (id, name, description, escalation_policy_id) VALUES (?, ?, ?, ?)`,
-		svc.ID, svc.Name, svc.Description, svc.EscalationPolicyID,
+		`INSERT INTO services (id, name, description, escalation_policy_id, team_id) VALUES (?, ?, ?, ?, ?)`,
+		svc.ID, svc.Name, svc.Description, svc.EscalationPolicyID, svc.TeamID,
 	)
 	return err
 }
@@ -28,8 +28,8 @@ func (s *serviceStore) Create(ctx context.Context, svc *store.Service) error {
 func (s *serviceStore) Get(ctx context.Context, id string) (*store.Service, error) {
 	svc := &store.Service{}
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, description, escalation_policy_id, created_at FROM services WHERE id = ?`, id,
-	).Scan(&svc.ID, &svc.Name, &svc.Description, &svc.EscalationPolicyID, &svc.CreatedAt)
+		`SELECT id, name, description, escalation_policy_id, team_id, created_at FROM services WHERE id = ?`, id,
+	).Scan(&svc.ID, &svc.Name, &svc.Description, &svc.EscalationPolicyID, &svc.TeamID, &svc.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
 	}
@@ -37,9 +37,23 @@ func (s *serviceStore) Get(ctx context.Context, id string) (*store.Service, erro
 }
 
 func (s *serviceStore) List(ctx context.Context) ([]store.Service, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, description, escalation_policy_id, created_at FROM services ORDER BY name`,
-	)
+	return s.listServices(ctx, "")
+}
+
+func (s *serviceStore) ListByTeam(ctx context.Context, teamID string) ([]store.Service, error) {
+	return s.listServices(ctx, teamID)
+}
+
+func (s *serviceStore) listServices(ctx context.Context, teamID string) ([]store.Service, error) {
+	query := `SELECT id, name, description, escalation_policy_id, team_id, created_at FROM services`
+	var args []any
+	if teamID != "" {
+		query += ` WHERE team_id = ?`
+		args = append(args, teamID)
+	}
+	query += ` ORDER BY name`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +62,7 @@ func (s *serviceStore) List(ctx context.Context) ([]store.Service, error) {
 	var services []store.Service
 	for rows.Next() {
 		var svc store.Service
-		if err := rows.Scan(&svc.ID, &svc.Name, &svc.Description, &svc.EscalationPolicyID, &svc.CreatedAt); err != nil {
+		if err := rows.Scan(&svc.ID, &svc.Name, &svc.Description, &svc.EscalationPolicyID, &svc.TeamID, &svc.CreatedAt); err != nil {
 			return nil, err
 		}
 		services = append(services, svc)
@@ -58,8 +72,8 @@ func (s *serviceStore) List(ctx context.Context) ([]store.Service, error) {
 
 func (s *serviceStore) Update(ctx context.Context, svc *store.Service) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE services SET name = ?, description = ?, escalation_policy_id = ? WHERE id = ?`,
-		svc.Name, svc.Description, svc.EscalationPolicyID, svc.ID,
+		`UPDATE services SET name = ?, description = ?, escalation_policy_id = ?, team_id = ? WHERE id = ?`,
+		svc.Name, svc.Description, svc.EscalationPolicyID, svc.TeamID, svc.ID,
 	)
 	if err != nil {
 		return err

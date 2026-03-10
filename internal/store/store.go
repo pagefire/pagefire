@@ -18,6 +18,7 @@ var (
 type Store interface {
 	// Shared Platform (v0.1)
 	Users() UserStore
+	Teams() TeamStore
 	Notifications() NotificationStore
 	Incidents() IncidentStore
 
@@ -30,6 +31,20 @@ type Store interface {
 	// Lifecycle
 	Migrate(ctx context.Context) error
 	Close() error
+}
+
+// TeamStore manages teams and team membership.
+type TeamStore interface {
+	Create(ctx context.Context, t *Team) error
+	Get(ctx context.Context, id string) (*Team, error)
+	List(ctx context.Context) ([]Team, error)
+	Update(ctx context.Context, t *Team) error
+	Delete(ctx context.Context, id string) error
+
+	AddMember(ctx context.Context, teamID, userID, role string) error
+	RemoveMember(ctx context.Context, teamID, userID string) error
+	ListMembers(ctx context.Context, teamID string) ([]TeamMember, error)
+	ListTeamsForUser(ctx context.Context, userID string) ([]Team, error)
 }
 
 // UserStore manages users, contact methods, and notification rules.
@@ -55,6 +70,7 @@ type ServiceStore interface {
 	Create(ctx context.Context, s *Service) error
 	Get(ctx context.Context, id string) (*Service, error)
 	List(ctx context.Context) ([]Service, error)
+	ListByTeam(ctx context.Context, teamID string) ([]Service, error)
 	Update(ctx context.Context, s *Service) error
 	Delete(ctx context.Context, id string) error
 
@@ -69,6 +85,7 @@ type EscalationPolicyStore interface {
 	Create(ctx context.Context, ep *EscalationPolicy) error
 	Get(ctx context.Context, id string) (*EscalationPolicy, error)
 	List(ctx context.Context) ([]EscalationPolicy, error)
+	ListByTeam(ctx context.Context, teamID string) ([]EscalationPolicy, error)
 	Update(ctx context.Context, ep *EscalationPolicy) error
 	Delete(ctx context.Context, id string) error
 
@@ -90,6 +107,7 @@ type ScheduleStore interface {
 	Create(ctx context.Context, s *Schedule) error
 	Get(ctx context.Context, id string) (*Schedule, error)
 	List(ctx context.Context) ([]Schedule, error)
+	ListByTeam(ctx context.Context, teamID string) ([]Schedule, error)
 	Update(ctx context.Context, s *Schedule) error
 	Delete(ctx context.Context, id string) error
 

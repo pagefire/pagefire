@@ -42,6 +42,7 @@ func NewRouter(s store.Store, resolver *oncall.Resolver, dispatcher *notificatio
 
 		r.Route("/api/v1", func(r chi.Router) {
 			r.Mount("/users", NewUserHandler(s.Users()).Routes())
+			r.Mount("/teams", NewTeamHandler(s.Teams()).Routes())
 			r.Mount("/services", NewServiceHandler(s.Services()).Routes())
 			r.Mount("/escalation-policies", NewEscalationPolicyHandler(s.EscalationPolicies()).Routes())
 			r.Mount("/schedules", NewScheduleHandler(s.Schedules()).Routes())

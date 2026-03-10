@@ -17,8 +17,8 @@ func (s *escalationPolicyStore) Create(ctx context.Context, ep *store.Escalation
 		ep.ID = uuid.NewString()
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO escalation_policies (id, name, description, repeat) VALUES (?, ?, ?, ?)`,
-		ep.ID, ep.Name, ep.Description, ep.Repeat,
+		`INSERT INTO escalation_policies (id, name, description, repeat, team_id) VALUES (?, ?, ?, ?, ?)`,
+		ep.ID, ep.Name, ep.Description, ep.Repeat, ep.TeamID,
 	)
 	return err
 }
@@ -26,8 +26,8 @@ func (s *escalationPolicyStore) Create(ctx context.Context, ep *store.Escalation
 func (s *escalationPolicyStore) Get(ctx context.Context, id string) (*store.EscalationPolicy, error) {
 	ep := &store.EscalationPolicy{}
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, description, repeat, created_at FROM escalation_policies WHERE id = ?`, id,
-	).Scan(&ep.ID, &ep.Name, &ep.Description, &ep.Repeat, &ep.CreatedAt)
+		`SELECT id, name, description, repeat, team_id, created_at FROM escalation_policies WHERE id = ?`, id,
+	).Scan(&ep.ID, &ep.Name, &ep.Description, &ep.Repeat, &ep.TeamID, &ep.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
 	}
@@ -35,9 +35,23 @@ func (s *escalationPolicyStore) Get(ctx context.Context, id string) (*store.Esca
 }
 
 func (s *escalationPolicyStore) List(ctx context.Context) ([]store.EscalationPolicy, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, description, repeat, created_at FROM escalation_policies ORDER BY name`,
-	)
+	return s.listPolicies(ctx, "")
+}
+
+func (s *escalationPolicyStore) ListByTeam(ctx context.Context, teamID string) ([]store.EscalationPolicy, error) {
+	return s.listPolicies(ctx, teamID)
+}
+
+func (s *escalationPolicyStore) listPolicies(ctx context.Context, teamID string) ([]store.EscalationPolicy, error) {
+	query := `SELECT id, name, description, repeat, team_id, created_at FROM escalation_policies`
+	var args []any
+	if teamID != "" {
+		query += ` WHERE team_id = ?`
+		args = append(args, teamID)
+	}
+	query += ` ORDER BY name`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +60,7 @@ func (s *escalationPolicyStore) List(ctx context.Context) ([]store.EscalationPol
 	var policies []store.EscalationPolicy
 	for rows.Next() {
 		var ep store.EscalationPolicy
-		if err := rows.Scan(&ep.ID, &ep.Name, &ep.Description, &ep.Repeat, &ep.CreatedAt); err != nil {
+		if err := rows.Scan(&ep.ID, &ep.Name, &ep.Description, &ep.Repeat, &ep.TeamID, &ep.CreatedAt); err != nil {
 			return nil, err
 		}
 		policies = append(policies, ep)
@@ -56,8 +70,8 @@ func (s *escalationPolicyStore) List(ctx context.Context) ([]store.EscalationPol
 
 func (s *escalationPolicyStore) Update(ctx context.Context, ep *store.EscalationPolicy) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE escalation_policies SET name = ?, description = ?, repeat = ? WHERE id = ?`,
-		ep.Name, ep.Description, ep.Repeat, ep.ID,
+		`UPDATE escalation_policies SET name = ?, description = ?, repeat = ?, team_id = ? WHERE id = ?`,
+		ep.Name, ep.Description, ep.Repeat, ep.TeamID, ep.ID,
 	)
 	if err != nil {
 		return err

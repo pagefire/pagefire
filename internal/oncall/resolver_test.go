@@ -57,6 +57,9 @@ func (s *mockScheduleStore) ListOverrides(context.Context, string) ([]store.Sche
 	panic("not implemented")
 }
 func (s *mockScheduleStore) DeleteOverride(context.Context, string) error { panic("not implemented") }
+func (s *mockScheduleStore) ListByTeam(context.Context, string) ([]store.Schedule, error) {
+	panic("not implemented")
+}
 
 // ---------------------------------------------------------------------------
 // Mock: UserStore

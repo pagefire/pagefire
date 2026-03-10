@@ -65,7 +65,13 @@ func (h *EscalationPolicyHandler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *EscalationPolicyHandler) list(w http.ResponseWriter, r *http.Request) {
-	policies, err := h.policies.List(r.Context())
+	var policies []store.EscalationPolicy
+	var err error
+	if teamID := r.URL.Query().Get("team_id"); teamID != "" {
+		policies, err = h.policies.ListByTeam(r.Context(), teamID)
+	} else {
+		policies, err = h.policies.List(r.Context())
+	}
 	if err != nil {
 		handleStoreError(w, err)
 		return

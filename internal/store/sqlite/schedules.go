@@ -18,8 +18,8 @@ func (s *scheduleStore) Create(ctx context.Context, sched *store.Schedule) error
 		sched.ID = uuid.NewString()
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO schedules (id, name, description, timezone) VALUES (?, ?, ?, ?)`,
-		sched.ID, sched.Name, sched.Description, sched.Timezone,
+		`INSERT INTO schedules (id, name, description, timezone, team_id) VALUES (?, ?, ?, ?, ?)`,
+		sched.ID, sched.Name, sched.Description, sched.Timezone, sched.TeamID,
 	)
 	return err
 }
@@ -27,8 +27,8 @@ func (s *scheduleStore) Create(ctx context.Context, sched *store.Schedule) error
 func (s *scheduleStore) Get(ctx context.Context, id string) (*store.Schedule, error) {
 	sched := &store.Schedule{}
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, name, description, timezone, created_at FROM schedules WHERE id = ?`, id,
-	).Scan(&sched.ID, &sched.Name, &sched.Description, &sched.Timezone, &sched.CreatedAt)
+		`SELECT id, name, description, timezone, team_id, created_at FROM schedules WHERE id = ?`, id,
+	).Scan(&sched.ID, &sched.Name, &sched.Description, &sched.Timezone, &sched.TeamID, &sched.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
 	}
@@ -36,9 +36,23 @@ func (s *scheduleStore) Get(ctx context.Context, id string) (*store.Schedule, er
 }
 
 func (s *scheduleStore) List(ctx context.Context) ([]store.Schedule, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, description, timezone, created_at FROM schedules ORDER BY name`,
-	)
+	return s.listSchedules(ctx, "")
+}
+
+func (s *scheduleStore) ListByTeam(ctx context.Context, teamID string) ([]store.Schedule, error) {
+	return s.listSchedules(ctx, teamID)
+}
+
+func (s *scheduleStore) listSchedules(ctx context.Context, teamID string) ([]store.Schedule, error) {
+	query := `SELECT id, name, description, timezone, team_id, created_at FROM schedules`
+	var args []any
+	if teamID != "" {
+		query += ` WHERE team_id = ?`
+		args = append(args, teamID)
+	}
+	query += ` ORDER BY name`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +61,7 @@ func (s *scheduleStore) List(ctx context.Context) ([]store.Schedule, error) {
 	var schedules []store.Schedule
 	for rows.Next() {
 		var sched store.Schedule
-		if err := rows.Scan(&sched.ID, &sched.Name, &sched.Description, &sched.Timezone, &sched.CreatedAt); err != nil {
+		if err := rows.Scan(&sched.ID, &sched.Name, &sched.Description, &sched.Timezone, &sched.TeamID, &sched.CreatedAt); err != nil {
 			return nil, err
 		}
 		schedules = append(schedules, sched)
@@ -57,8 +71,8 @@ func (s *scheduleStore) List(ctx context.Context) ([]store.Schedule, error) {
 
 func (s *scheduleStore) Update(ctx context.Context, sched *store.Schedule) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE schedules SET name = ?, description = ?, timezone = ? WHERE id = ?`,
-		sched.Name, sched.Description, sched.Timezone, sched.ID,
+		`UPDATE schedules SET name = ?, description = ?, timezone = ?, team_id = ? WHERE id = ?`,
+		sched.Name, sched.Description, sched.Timezone, sched.TeamID, sched.ID,
 	)
 	if err != nil {
 		return err

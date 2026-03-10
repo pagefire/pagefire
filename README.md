@@ -2,6 +2,8 @@
 
 Open-source incident management platform. On-call scheduling, alert escalation, and notifications in a single Go binary.
 
+**Coming from Grafana OnCall?** See the [Migration Guide](docs/migrating-from-grafana-oncall.md).
+
 ## Why PageFire?
 
 - **Single binary** — no Docker compose, no 8GB RAM minimum, no microservices. Just download and run.

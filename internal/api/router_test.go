@@ -436,3 +436,252 @@ func TestSecurityHeadersOnRoutes(t *testing.T) {
 		}
 	}
 }
+
+// --- Team CRUD tests ---
+
+func TestCreateTeam(t *testing.T) {
+	router, _ := newTestRouter(t)
+	body := map[string]string{
+		"name":        "Platform",
+		"description": "Platform team",
+	}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/teams", body, testToken)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("POST /api/v1/teams: want 201, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var team map[string]any
+	decodeBody(t, rr, &team)
+	if team["id"] == nil || team["id"] == "" {
+		t.Fatal("POST /api/v1/teams: response missing id")
+	}
+	if team["name"] != "Platform" {
+		t.Fatalf("name = %q, want %q", team["name"], "Platform")
+	}
+}
+
+func TestCreateTeamMissingName(t *testing.T) {
+	router, _ := newTestRouter(t)
+	body := map[string]string{"description": "no name"}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/teams", body, testToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("POST /api/v1/teams without name: want 400, got %d", rr.Code)
+	}
+}
+
+func TestGetTeam(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	// Create a team.
+	createBody := map[string]string{"name": "SRE"}
+	createRR := doRequest(t, router, http.MethodPost, "/api/v1/teams", createBody, testToken)
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("setup: create team got %d", createRR.Code)
+	}
+	var created map[string]any
+	decodeBody(t, createRR, &created)
+	id := created["id"].(string)
+
+	// Get the team.
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/teams/"+id, nil, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/teams/%s: want 200, got %d", id, rr.Code)
+	}
+	var team map[string]any
+	decodeBody(t, rr, &team)
+	if team["name"] != "SRE" {
+		t.Fatalf("name = %q, want %q", team["name"], "SRE")
+	}
+}
+
+func TestGetTeamNotFound(t *testing.T) {
+	router, _ := newTestRouter(t)
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/teams/nonexistent", nil, testToken)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("GET /api/v1/teams/nonexistent: want 404, got %d", rr.Code)
+	}
+}
+
+func TestListTeams(t *testing.T) {
+	router, _ := newTestRouter(t)
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/teams", nil, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/teams: want 200, got %d", rr.Code)
+	}
+}
+
+func TestUpdateTeam(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	// Create a team.
+	createRR := doRequest(t, router, http.MethodPost, "/api/v1/teams", map[string]string{"name": "Old"}, testToken)
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("setup: got %d", createRR.Code)
+	}
+	var created map[string]any
+	decodeBody(t, createRR, &created)
+	id := created["id"].(string)
+
+	// Update.
+	rr := doRequest(t, router, http.MethodPut, "/api/v1/teams/"+id, map[string]string{"name": "New"}, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT /api/v1/teams/%s: want 200, got %d; body: %s", id, rr.Code, rr.Body.String())
+	}
+}
+
+func TestDeleteTeam(t *testing.T) {
+	router, _ := newTestRouter(t)
+
+	// Create a team.
+	createRR := doRequest(t, router, http.MethodPost, "/api/v1/teams", map[string]string{"name": "ToDelete"}, testToken)
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("setup: got %d", createRR.Code)
+	}
+	var created map[string]any
+	decodeBody(t, createRR, &created)
+	id := created["id"].(string)
+
+	rr := doRequest(t, router, http.MethodDelete, "/api/v1/teams/"+id, nil, testToken)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("DELETE /api/v1/teams/%s: want 204, got %d", id, rr.Code)
+	}
+
+	// Verify it's gone.
+	getRR := doRequest(t, router, http.MethodGet, "/api/v1/teams/"+id, nil, testToken)
+	if getRR.Code != http.StatusNotFound {
+		t.Fatalf("GET after DELETE: want 404, got %d", getRR.Code)
+	}
+}
+
+// --- Team membership API tests ---
+
+func createTestTeam(t *testing.T, router http.Handler) string {
+	t.Helper()
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/teams", map[string]string{"name": "TestTeam-" + t.Name()}, testToken)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("setup: create team got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var team map[string]any
+	decodeBody(t, rr, &team)
+	return team["id"].(string)
+}
+
+func createTestUser(t *testing.T, router http.Handler) string {
+	t.Helper()
+	body := map[string]string{"name": "User-" + t.Name(), "email": t.Name() + "@example.com"}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/users", body, testToken)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("setup: create user got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var user map[string]any
+	decodeBody(t, rr, &user)
+	return user["id"].(string)
+}
+
+func TestAddTeamMember(t *testing.T) {
+	router, _ := newTestRouter(t)
+	teamID := createTestTeam(t, router)
+	userID := createTestUser(t, router)
+
+	body := map[string]string{"user_id": userID, "role": "admin"}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/teams/"+teamID+"/members", body, testToken)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("POST members: want 201, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var member map[string]any
+	decodeBody(t, rr, &member)
+	if member["role"] != "admin" {
+		t.Errorf("role = %q, want %q", member["role"], "admin")
+	}
+}
+
+func TestAddTeamMemberDefaultRole(t *testing.T) {
+	router, _ := newTestRouter(t)
+	teamID := createTestTeam(t, router)
+	userID := createTestUser(t, router)
+
+	// Omit role — should default to "member".
+	body := map[string]string{"user_id": userID}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/teams/"+teamID+"/members", body, testToken)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("POST members: want 201, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var member map[string]any
+	decodeBody(t, rr, &member)
+	if member["role"] != "member" {
+		t.Errorf("role = %q, want %q", member["role"], "member")
+	}
+}
+
+func TestAddTeamMemberInvalidRole(t *testing.T) {
+	router, _ := newTestRouter(t)
+	teamID := createTestTeam(t, router)
+	userID := createTestUser(t, router)
+
+	body := map[string]string{"user_id": userID, "role": "superuser"}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/teams/"+teamID+"/members", body, testToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("POST members with invalid role: want 400, got %d", rr.Code)
+	}
+}
+
+func TestAddTeamMemberMissingUserID(t *testing.T) {
+	router, _ := newTestRouter(t)
+	teamID := createTestTeam(t, router)
+
+	body := map[string]string{"role": "member"}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/teams/"+teamID+"/members", body, testToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("POST members without user_id: want 400, got %d", rr.Code)
+	}
+}
+
+func TestListTeamMembers(t *testing.T) {
+	router, _ := newTestRouter(t)
+	teamID := createTestTeam(t, router)
+	userID := createTestUser(t, router)
+
+	// Add member.
+	addBody := map[string]string{"user_id": userID, "role": "member"}
+	doRequest(t, router, http.MethodPost, "/api/v1/teams/"+teamID+"/members", addBody, testToken)
+
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/teams/"+teamID+"/members", nil, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET members: want 200, got %d", rr.Code)
+	}
+	var members []map[string]any
+	decodeBody(t, rr, &members)
+	if len(members) != 1 {
+		t.Fatalf("expected 1 member, got %d", len(members))
+	}
+}
+
+func TestRemoveTeamMember(t *testing.T) {
+	router, _ := newTestRouter(t)
+	teamID := createTestTeam(t, router)
+	userID := createTestUser(t, router)
+
+	// Add then remove.
+	addBody := map[string]string{"user_id": userID, "role": "member"}
+	doRequest(t, router, http.MethodPost, "/api/v1/teams/"+teamID+"/members", addBody, testToken)
+
+	rr := doRequest(t, router, http.MethodDelete, "/api/v1/teams/"+teamID+"/members/"+userID, nil, testToken)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("DELETE member: want 204, got %d", rr.Code)
+	}
+
+	// Verify empty.
+	listRR := doRequest(t, router, http.MethodGet, "/api/v1/teams/"+teamID+"/members", nil, testToken)
+	var members []map[string]any
+	decodeBody(t, listRR, &members)
+	if len(members) != 0 {
+		t.Fatalf("expected 0 members after remove, got %d", len(members))
+	}
+}
+
+func TestTeamsRequireAuth(t *testing.T) {
+	router, _ := newTestRouter(t)
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/teams", nil, "")
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /api/v1/teams without auth: want 401, got %d", rr.Code)
+	}
+}

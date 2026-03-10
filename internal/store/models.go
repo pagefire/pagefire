@@ -47,6 +47,21 @@ const (
 	TargetTypeSchedule = "schedule"
 )
 
+// Team represents an organizational unit for grouping resources.
+type Team struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// TeamMember links a user to a team with a role.
+type TeamMember struct {
+	TeamID string `json:"team_id"`
+	UserID string `json:"user_id"`
+	Role   string `json:"role"` // "admin", "member"
+}
+
 // User represents a platform user.
 type User struct {
 	ID        string    `json:"id"`
@@ -82,6 +97,7 @@ type Service struct {
 	Name               string    `json:"name"`
 	Description        string    `json:"description,omitempty"`
 	EscalationPolicyID string    `json:"escalation_policy_id"`
+	TeamID             *string   `json:"team_id,omitempty"`
 	CreatedAt          time.Time `json:"created_at"`
 }
 
@@ -101,6 +117,7 @@ type EscalationPolicy struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description,omitempty"`
 	Repeat      int       `json:"repeat"` // 0-5 times to loop
+	TeamID      *string   `json:"team_id,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -126,6 +143,7 @@ type Schedule struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description,omitempty"`
 	Timezone    string    `json:"timezone"`
+	TeamID      *string   `json:"team_id,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 

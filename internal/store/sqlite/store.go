@@ -52,6 +52,7 @@ func (s *SQLiteStore) Close() error {
 }
 
 func (s *SQLiteStore) Users() store.UserStore               { return &userStore{db: s.db} }
+func (s *SQLiteStore) Teams() store.TeamStore               { return &teamStore{db: s.db} }
 func (s *SQLiteStore) Services() store.ServiceStore          { return &serviceStore{db: s.db} }
 func (s *SQLiteStore) EscalationPolicies() store.EscalationPolicyStore {
 	return &escalationPolicyStore{db: s.db}

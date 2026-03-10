@@ -60,7 +60,13 @@ func (h *ServiceHandler) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ServiceHandler) list(w http.ResponseWriter, r *http.Request) {
-	services, err := h.services.List(r.Context())
+	var services []store.Service
+	var err error
+	if teamID := r.URL.Query().Get("team_id"); teamID != "" {
+		services, err = h.services.ListByTeam(r.Context(), teamID)
+	} else {
+		services, err = h.services.List(r.Context())
+	}
 	if err != nil {
 		handleStoreError(w, err)
 		return
