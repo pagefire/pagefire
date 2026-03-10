@@ -79,7 +79,7 @@ jobs:
           VERSION=${GITHUB_REF_NAME}
           go build -ldflags "-s -w -X main.version=${VERSION}" -o pagefire-${{ matrix.suffix }} ./cmd/pagefire
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: pagefire-${{ matrix.suffix }}
           path: pagefire-${{ matrix.suffix }}
