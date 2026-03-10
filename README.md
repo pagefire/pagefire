@@ -5,7 +5,7 @@ Open-source incident management platform. On-call scheduling, alert escalation, 
 ## Why PageFire?
 
 - **Single binary** — no Docker compose, no 8GB RAM minimum, no microservices. Just download and run.
-- **SQLite by default** — zero-dependency setup. Postgres available for HA deployments.
+- **SQLite by default** — zero-dependency setup. Postgres support planned.
 - **Opinionated simplicity** — on-call + alerts + escalation. No APM, no logs, no traces.
 
 ## Status
@@ -16,6 +16,8 @@ Current: on-call engine, alert escalation, notification dispatch (email, webhook
 
 ## Quick Start
 
+Requires Go 1.22+.
+
 ```bash
 # Build
 make build
@@ -25,6 +27,9 @@ PAGEFIRE_ADMIN_TOKEN=your-secret-token ./bin/pagefire serve
 
 # Or use go run
 PAGEFIRE_ADMIN_TOKEN=your-secret-token make dev
+
+# Run tests
+make test
 ```
 
 ## Configuration
@@ -35,7 +40,7 @@ All configuration via environment variables with `PAGEFIRE_` prefix:
 |----------|---------|-------------|
 | `PAGEFIRE_PORT` | `3000` | HTTP listen port |
 | `PAGEFIRE_ADMIN_TOKEN` | *(required)* | Bearer token for API authentication |
-| `PAGEFIRE_DATABASE_DRIVER` | `sqlite` | `sqlite` or `postgres` |
+| `PAGEFIRE_DATABASE_DRIVER` | `sqlite` | `sqlite` (postgres planned) |
 | `PAGEFIRE_DATABASE_URL` | `./pagefire.db` | Database connection string |
 | `PAGEFIRE_DATA_DIR` | `.` | Data directory for SQLite |
 | `PAGEFIRE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
@@ -104,8 +109,6 @@ internal/
 ```
 
 ## Security
-
-See [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md) for the pre-commit security checklist.
 
 Hardened against STRIDE threat model findings:
 - Bearer token auth with constant-time comparison
