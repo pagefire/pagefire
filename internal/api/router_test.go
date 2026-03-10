@@ -12,6 +12,7 @@ import (
 
 	"github.com/pagefire/pagefire/internal/notification"
 	"github.com/pagefire/pagefire/internal/oncall"
+	"github.com/pagefire/pagefire/internal/store"
 	"github.com/pagefire/pagefire/internal/store/sqlite"
 )
 
@@ -368,6 +369,53 @@ func TestRequestBodyLimit(t *testing.T) {
 	// Should be rejected with 400 (body too large triggers decode error).
 	if rr.Code != http.StatusBadRequest && rr.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("POST with >1MB body: want 400 or 413, got %d", rr.Code)
+	}
+}
+
+// --- Integration dedup test ---
+
+func TestIntegrationDedupReturns200(t *testing.T) {
+	router, s := newTestRouter(t)
+	ctx := context.Background()
+
+	// Create escalation policy, service, integration key via store directly
+	ep := &store.EscalationPolicy{Name: "Test EP", Repeat: 0}
+	if err := s.EscalationPolicies().Create(ctx, ep); err != nil {
+		t.Fatal(err)
+	}
+	svc := &store.Service{Name: "Test Svc", EscalationPolicyID: ep.ID}
+	if err := s.Services().Create(ctx, svc); err != nil {
+		t.Fatal(err)
+	}
+	ik := &store.IntegrationKey{ServiceID: svc.ID, Name: "test-key", Type: "generic"}
+	if err := s.Services().CreateIntegrationKey(ctx, ik); err != nil {
+		t.Fatal(err)
+	}
+
+	body := map[string]string{
+		"summary":   "disk full",
+		"details":   "root at 99%",
+		"dedup_key": "disk-full",
+	}
+
+	// First alert: should be 201 Created
+	rr1 := doRequest(t, router, http.MethodPost, "/api/v1/integrations/"+ik.Secret+"/alerts", body, "")
+	if rr1.Code != http.StatusCreated {
+		t.Fatalf("first alert: want 201, got %d; body: %s", rr1.Code, rr1.Body.String())
+	}
+	var alert1 map[string]any
+	decodeBody(t, rr1, &alert1)
+
+	// Second alert with same dedup_key: should be 200 OK with same ID
+	rr2 := doRequest(t, router, http.MethodPost, "/api/v1/integrations/"+ik.Secret+"/alerts", body, "")
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("dedup alert: want 200, got %d; body: %s", rr2.Code, rr2.Body.String())
+	}
+	var alert2 map[string]any
+	decodeBody(t, rr2, &alert2)
+
+	if alert2["id"] != alert1["id"] {
+		t.Errorf("dedup should return same alert ID: got %v, want %v", alert2["id"], alert1["id"])
 	}
 }
 

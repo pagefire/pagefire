@@ -443,6 +443,49 @@ func TestOverride_ListActiveWithTimeFiltering(t *testing.T) {
 	}
 }
 
+func TestOverride_ListActiveSubSecondPrecision(t *testing.T) {
+	// Reproduces a bug where an override stored with second precision (from JSON)
+	// is not found when queried with sub-second precision (from time.Now()) in the
+	// same second, due to SQLite string comparison of time formats.
+	s := newTestStore(t)
+	ctx := context.Background()
+	ss := s.Schedules()
+
+	createTestUserWithID(t, s, "user-x", "Alice", "alicex@example.com")
+	createTestUserWithID(t, s, "user-y", "Bob", "boby@example.com")
+
+	sched := &store.Schedule{Name: "SubSecond", Timezone: "UTC"}
+	if err := ss.Create(ctx, sched); err != nil {
+		t.Fatalf("Create schedule: %v", err)
+	}
+
+	// Store override with exact-second start_time (zero nanoseconds), like JSON parse produces.
+	startTime := time.Date(2026, 3, 10, 13, 54, 45, 0, time.UTC)
+	o := &store.ScheduleOverride{
+		ScheduleID:   sched.ID,
+		StartTime:    startTime,
+		EndTime:      startTime.Add(7 * 24 * time.Hour),
+		ReplaceUser:  "user-x",
+		OverrideUser: "user-y",
+	}
+	if err := ss.CreateOverride(ctx, o); err != nil {
+		t.Fatalf("CreateOverride: %v", err)
+	}
+
+	// Query with sub-second precision in the same second (simulates time.Now()).
+	queryTime := time.Date(2026, 3, 10, 13, 54, 45, 42_000_000, time.UTC) // +42ms
+	result, err := ss.ListActiveOverrides(ctx, sched.ID, queryTime)
+	if err != nil {
+		t.Fatalf("ListActiveOverrides: %v", err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("ListActiveOverrides with sub-second query: got %d overrides, want 1 (override not found due to time precision mismatch)", len(result))
+	}
+	if result[0].ID != o.ID {
+		t.Errorf("override ID = %q, want %q", result[0].ID, o.ID)
+	}
+}
+
 func TestOverride_Delete(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

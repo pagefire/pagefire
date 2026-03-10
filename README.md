@@ -108,6 +108,45 @@ internal/
   notification/        Dispatcher + providers (email, webhook, slack)
 ```
 
+## Demo
+
+Two demo scripts are included to exercise PageFire end-to-end.
+
+### Single-user demo (`demo/demo.sh`)
+
+Starts PageFire, a fake app, and a notification receiver. A health checker polls the app every 5 seconds. Kill the app to trigger an alert and get paged; restart it to auto-resolve.
+
+```bash
+./demo/demo.sh
+```
+
+What it sets up:
+- PageFire on `:3001`, fake app on `:8080`, notification receiver on `:9090`
+- One user, one webhook contact method, one escalation policy, one service
+
+Once running, try:
+1. Kill the app: `kill $(lsof -ti:8080)`
+2. Watch the alert fire and notification print to the terminal
+3. Restart the app: `go run demo/myapp.go &`
+4. Watch the alert auto-resolve
+
+### Multi-user demo (`demo/demo-org.sh`)
+
+Demonstrates a full team setup with three users, an on-call schedule with rotations, schedule overrides, and escalation through multiple steps.
+
+```bash
+./demo/demo-org.sh
+```
+
+What it sets up:
+- Three users (AAA, BBB, CCC) with webhook contact methods
+- An on-call schedule with a daily rotation
+- An escalation policy with two steps (on-call schedule, then all users)
+- A schedule override swapping the on-call user
+- A health checker that fires alerts and verifies notifications route correctly
+
+Both scripts clean up all processes and temp files on exit (Ctrl+C).
+
 ## Security
 
 Hardened against STRIDE threat model findings:

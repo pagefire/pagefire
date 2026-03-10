@@ -33,7 +33,7 @@ func (s *alertStore) Create(ctx context.Context, a *store.Alert) error {
 		}
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	a.NextEscalationAt = &now
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO alerts (id, service_id, status, summary, details, source, dedup_key, escalation_policy_snapshot, next_escalation_at)
@@ -121,7 +121,7 @@ func (s *alertStore) List(ctx context.Context, filter store.AlertFilter) ([]stor
 }
 
 func (s *alertStore) Acknowledge(ctx context.Context, id string, userID string) error {
-	now := time.Now()
+	now := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE alerts SET status = ?, acknowledged_by = ?, acknowledged_at = ?, next_escalation_at = NULL
 		 WHERE id = ? AND status = ?`,
@@ -138,7 +138,7 @@ func (s *alertStore) Acknowledge(ctx context.Context, id string, userID string) 
 }
 
 func (s *alertStore) Resolve(ctx context.Context, id string) error {
-	now := time.Now()
+	now := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE alerts SET status = ?, resolved_at = ?, next_escalation_at = NULL
 		 WHERE id = ? AND status != ?`,
@@ -161,7 +161,7 @@ func (s *alertStore) FindPendingEscalations(ctx context.Context, before time.Tim
 		        next_escalation_at, acknowledged_by, acknowledged_at, resolved_at, created_at
 		 FROM alerts
 		 WHERE status = ? AND next_escalation_at IS NOT NULL AND next_escalation_at <= ?`,
-		store.AlertStatusTriggered, before,
+		store.AlertStatusTriggered, before.UTC(),
 	)
 	if err != nil {
 		return nil, err
@@ -183,9 +183,13 @@ func (s *alertStore) FindPendingEscalations(ctx context.Context, before time.Tim
 }
 
 func (s *alertStore) UpdateEscalationStep(ctx context.Context, id string, step int, loopCount int, nextAt time.Time) error {
+	var nextAtParam any
+	if !nextAt.IsZero() {
+		nextAtParam = nextAt.UTC()
+	}
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE alerts SET escalation_step = ?, loop_count = ?, next_escalation_at = ? WHERE id = ?`,
-		step, loopCount, nextAt, id,
+		step, loopCount, nextAtParam, id,
 	)
 	return err
 }

@@ -57,8 +57,9 @@ func (p *EscalationProcessor) processAlert(ctx context.Context, alert store.Aler
 			step = 0
 			loopCount++
 		} else {
-			slog.Warn("escalation exhausted", "alert_id", alert.ID)
-			return nil
+			slog.Info("escalation exhausted", "alert_id", alert.ID)
+			// Clear next_escalation_at so this alert stops being picked up
+			return p.alerts.UpdateEscalationStep(ctx, alert.ID, step, loopCount, time.Time{})
 		}
 	}
 
@@ -85,6 +86,8 @@ func (p *EscalationProcessor) processAlert(ctx context.Context, alert store.Aler
 		}
 	}
 
+	slog.Info("escalation processing", "alert_id", alert.ID, "step", step, "target_users", len(targetUsers))
+
 	// Queue notifications for each user based on their notification rules
 	for _, user := range targetUsers {
 		rules, err := p.users.ListNotificationRules(ctx, user.ID)
@@ -106,6 +109,7 @@ func (p *EscalationProcessor) processAlert(ctx context.Context, alert store.Aler
 					n := &store.Notification{
 						AlertID:         alert.ID,
 						UserID:          user.ID,
+						UserName:        user.Name,
 						ContactMethodID: cm.ID,
 						Type:            "alert",
 						DestinationType: cm.Type,

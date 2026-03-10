@@ -15,7 +15,8 @@ type Config struct {
 	DataDir        string       `koanf:"data_dir"`
 	LogLevel       string       `koanf:"log_level"`
 	AdminToken     string       `koanf:"admin_token"`
-	Engine         EngineConfig `koanf:"engine"`
+	AllowPrivateWebhooks bool         `koanf:"allow_private_webhooks"`
+	Engine               EngineConfig `koanf:"engine"`
 	SMTP           SMTPConfig   `koanf:"smtp"`
 	Slack          SlackConfig  `koanf:"slack"`
 }
@@ -49,12 +50,21 @@ func LoadConfig() (*Config, error) {
 	k.Set("engine.interval_seconds", 5)
 	k.Set("smtp.port", 587)
 
-	// Environment variables: PAGEFIRE_PORT, PAGEFIRE_DATABASE_URL, etc.
+	// Environment variables: PAGEFIRE_PORT, PAGEFIRE_ADMIN_TOKEN, etc.
+	// Known prefixes are mapped to nested struct fields; single underscores
+	// within field names are preserved (e.g. admin_token, database_url).
+	nestedPrefixes := []string{"smtp_", "slack_", "engine_"}
+
 	err := k.Load(env.Provider("PAGEFIRE_", ".", func(s string) string {
-		return strings.ReplaceAll(
-			strings.ToLower(strings.TrimPrefix(s, "PAGEFIRE_")),
-			"_", ".",
-		)
+		key := strings.ToLower(strings.TrimPrefix(s, "PAGEFIRE_"))
+		for _, prefix := range nestedPrefixes {
+			if strings.HasPrefix(key, prefix) {
+				// Replace only the first underscore to create nesting dot
+				// e.g. smtp_host → smtp.host, slack_bot_token → slack.bot_token
+				return strings.Replace(key, "_", ".", 1)
+			}
+		}
+		return key
 	}), nil)
 	if err != nil {
 		return nil, err

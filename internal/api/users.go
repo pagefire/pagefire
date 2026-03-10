@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/pagefire/pagefire/internal/store"
@@ -142,8 +143,11 @@ func (h *UserHandler) createContactMethod(w http.ResponseWriter, r *http.Request
 			return
 		}
 	case "webhook":
-		if err := validateWebhookURL(cm.Value); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+		// Basic URL format validation only. SSRF protection is enforced
+		// at send time by the webhook provider, not at registration time.
+		u, err := url.Parse(cm.Value)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+			writeError(w, http.StatusBadRequest, "invalid webhook URL")
 			return
 		}
 	case "slack_dm":

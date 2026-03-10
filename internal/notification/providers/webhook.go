@@ -14,12 +14,14 @@ import (
 )
 
 type Webhook struct {
-	client *http.Client
+	client              *http.Client
+	allowPrivateTargets bool
 }
 
-func NewWebhook() *Webhook {
+func NewWebhook(allowPrivateTargets bool) *Webhook {
 	return &Webhook{
-		client: &http.Client{Timeout: 10 * time.Second},
+		client:              &http.Client{Timeout: 10 * time.Second},
+		allowPrivateTargets: allowPrivateTargets,
 	}
 }
 
@@ -27,14 +29,18 @@ func (w *Webhook) Type() string { return "webhook" }
 
 func (w *Webhook) Send(ctx context.Context, msg notification.Message) (string, error) {
 	// SSRF protection: validate URL target before connecting
-	if err := validateWebhookTarget(msg.To); err != nil {
-		return "", fmt.Errorf("blocked webhook target: %w", err)
+	if !w.allowPrivateTargets {
+		if err := validateWebhookTarget(msg.To); err != nil {
+			return "", fmt.Errorf("blocked webhook target: %w", err)
+		}
 	}
 
 	payload := map[string]string{
-		"alert_id": msg.AlertID,
-		"subject":  msg.Subject,
-		"body":     msg.Body,
+		"alert_id":  msg.AlertID,
+		"subject":   msg.Subject,
+		"body":      msg.Body,
+		"user_id":   msg.UserID,
+		"user_name": msg.UserName,
 	}
 
 	body, err := json.Marshal(payload)

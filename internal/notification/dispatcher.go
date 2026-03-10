@@ -9,10 +9,12 @@ import (
 
 // Message is the payload sent to a notification provider.
 type Message struct {
-	To      string
-	Subject string
-	Body    string
-	AlertID string
+	To       string
+	Subject  string
+	Body     string
+	AlertID  string
+	UserID   string
+	UserName string
 }
 
 // Provider is the interface for notification delivery backends.
@@ -43,10 +45,12 @@ func (d *Dispatcher) Dispatch(ctx context.Context, n store.Notification) (string
 	}
 
 	msg := Message{
-		To:      n.Destination,
-		Subject: n.Subject,
-		Body:    n.Body,
-		AlertID: n.AlertID,
+		To:       n.Destination,
+		Subject:  n.Subject,
+		Body:     n.Body,
+		AlertID:  n.AlertID,
+		UserID:   n.UserID,
+		UserName: n.UserName,
 	}
 
 	return p.Send(ctx, msg)

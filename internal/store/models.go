@@ -194,6 +194,7 @@ type Notification struct {
 	ID              string     `json:"id"`
 	AlertID         string     `json:"alert_id,omitempty"`
 	UserID          string     `json:"user_id,omitempty"`
+	UserName        string     `json:"user_name,omitempty" db:"-"` // resolved at dispatch time, not persisted
 	ContactMethodID string     `json:"contact_method_id,omitempty"`
 	Type            string     `json:"type"` // "alert", "subscriber"
 	DestinationType string     `json:"destination_type"`

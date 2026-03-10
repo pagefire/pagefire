@@ -64,7 +64,7 @@ func New(cfg *Config) (*App, error) {
 
 	// Notification dispatcher
 	dispatcher := notification.NewDispatcher()
-	dispatcher.Register(providers.NewWebhook())
+	dispatcher.Register(providers.NewWebhook(cfg.AllowPrivateWebhooks))
 	if cfg.SMTP.Host != "" {
 		dispatcher.Register(providers.NewEmail(cfg.SMTP.Host, cfg.SMTP.Port, cfg.SMTP.From, cfg.SMTP.Username, cfg.SMTP.Password))
 	}
@@ -79,7 +79,7 @@ func New(cfg *Config) (*App, error) {
 	interval := time.Duration(cfg.Engine.IntervalSeconds) * time.Second
 	eng := engine.New(interval,
 		engine.NewEscalationProcessor(s.Alerts(), s.Notifications(), s.Users(), resolver),
-		engine.NewNotificationProcessor(s.Notifications(), dispatcher),
+		engine.NewNotificationProcessor(s.Notifications(), s.Users(), dispatcher),
 		engine.NewCleanupProcessor(s),
 	)
 

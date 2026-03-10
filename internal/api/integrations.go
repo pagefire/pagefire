@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -52,6 +53,10 @@ func (h *IntegrationHandler) genericWebhook(w http.ResponseWriter, r *http.Reque
 
 	alert, err := h.createAlertFromIntegration(r, ik, req.Summary, req.Details, req.DeduplicationKey)
 	if err != nil {
+		if errors.Is(err, store.ErrDuplicateKey) && alert != nil {
+			writeJSON(w, http.StatusOK, alert)
+			return
+		}
 		handleStoreError(w, err)
 		return
 	}
@@ -150,6 +155,14 @@ func (h *IntegrationHandler) createAlertFromIntegration(r *http.Request, ik *sto
 	}
 
 	if err := h.alerts.Create(r.Context(), alert); err != nil {
+		if errors.Is(err, store.ErrDuplicateKey) {
+			// Return the existing alert — dedup is not an error for integrations
+			existing, getErr := h.alerts.Get(r.Context(), alert.ID)
+			if getErr != nil {
+				return nil, getErr
+			}
+			return existing, store.ErrDuplicateKey
+		}
 		return nil, err
 	}
 

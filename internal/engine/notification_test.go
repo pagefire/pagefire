@@ -25,7 +25,7 @@ func (m *mockProvider) ValidateTarget(target string) error { return nil }
 func TestNotificationProcessor_TickNoPending(t *testing.T) {
 	s := newTestStore(t)
 	dispatcher := notification.NewDispatcher()
-	proc := NewNotificationProcessor(s.Notifications(), dispatcher)
+	proc := NewNotificationProcessor(s.Notifications(), s.Users(), dispatcher)
 
 	if err := proc.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick with no pending notifications should not error, got: %v", err)
@@ -76,7 +76,7 @@ func TestNotificationProcessor_TickDispatchesPending(t *testing.T) {
 		},
 	})
 
-	proc := NewNotificationProcessor(s.Notifications(), dispatcher)
+	proc := NewNotificationProcessor(s.Notifications(), s.Users(), dispatcher)
 	if err := proc.Tick(ctx); err != nil {
 		t.Fatalf("Tick failed: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestNotificationProcessor_DispatchFailureWithRetriesLeft(t *testing.T) {
 		},
 	})
 
-	proc := NewNotificationProcessor(s.Notifications(), dispatcher)
+	proc := NewNotificationProcessor(s.Notifications(), s.Users(), dispatcher)
 	if err := proc.Tick(ctx); err != nil {
 		t.Fatalf("Tick failed: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestNotificationProcessor_DispatchFailureMaxAttempts(t *testing.T) {
 		},
 	})
 
-	proc := NewNotificationProcessor(s.Notifications(), dispatcher)
+	proc := NewNotificationProcessor(s.Notifications(), s.Users(), dispatcher)
 	if err := proc.Tick(ctx); err != nil {
 		t.Fatalf("Tick failed: %v", err)
 	}

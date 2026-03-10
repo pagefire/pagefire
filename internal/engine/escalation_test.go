@@ -186,6 +186,9 @@ func TestEscalationProcessor_EscalationExhausted(t *testing.T) {
 	if updated.LoopCount != 0 {
 		t.Errorf("expected loop_count to remain 0, got %d", updated.LoopCount)
 	}
+	if updated.NextEscalationAt != nil {
+		t.Errorf("expected next_escalation_at to be nil (cleared) after exhaustion, got %v", updated.NextEscalationAt)
+	}
 }
 
 func TestEscalationProcessor_EscalationLoops(t *testing.T) {

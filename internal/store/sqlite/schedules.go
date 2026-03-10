@@ -88,7 +88,7 @@ func (s *scheduleStore) CreateRotation(ctx context.Context, r *store.Rotation) e
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO rotations (id, schedule_id, name, type, shift_length, start_time, handoff_time) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		r.ID, r.ScheduleID, r.Name, r.Type, r.ShiftLength, r.StartTime, r.HandoffTime,
+		r.ID, r.ScheduleID, r.Name, r.Type, r.ShiftLength, r.StartTime.UTC(), r.HandoffTime,
 	)
 	return err
 }
@@ -185,7 +185,7 @@ func (s *scheduleStore) CreateOverride(ctx context.Context, o *store.ScheduleOve
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO schedule_overrides (id, schedule_id, start_time, end_time, replace_user, override_user) VALUES (?, ?, ?, ?, ?, ?)`,
-		o.ID, o.ScheduleID, o.StartTime, o.EndTime, o.ReplaceUser, o.OverrideUser,
+		o.ID, o.ScheduleID, o.StartTime.UTC(), o.EndTime.UTC(), o.ReplaceUser, o.OverrideUser,
 	)
 	return err
 }
@@ -216,7 +216,7 @@ func (s *scheduleStore) ListActiveOverrides(ctx context.Context, scheduleID stri
 		 FROM schedule_overrides
 		 WHERE schedule_id = ? AND start_time <= ? AND end_time > ?
 		 ORDER BY start_time`,
-		scheduleID, at, at,
+		scheduleID, at.UTC(), at.UTC(),
 	)
 	if err != nil {
 		return nil, err
