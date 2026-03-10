@@ -140,6 +140,7 @@ func (h *IntegrationHandler) createAlertFromIntegration(r *http.Request, ik *sto
 	now := time.Now()
 	alert := &store.Alert{
 		ServiceID:                ik.ServiceID,
+		Status:                   store.AlertStatusTriggered,
 		Summary:                  summary,
 		Details:                  details,
 		Source:                   "integration",

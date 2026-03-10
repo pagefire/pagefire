@@ -68,6 +68,7 @@ func (h *AlertHandler) create(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	alert := &store.Alert{
 		ServiceID:                req.ServiceID,
+		Status:                   store.AlertStatusTriggered,
 		Summary:                  req.Summary,
 		Details:                  req.Details,
 		Source:                   "api",
