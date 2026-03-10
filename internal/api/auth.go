@@ -27,6 +27,12 @@ func UserFromContext(ctx context.Context) *store.User {
 func APITokenAuth(adminToken string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Reject all requests if no admin token is configured
+			if adminToken == "" {
+				writeError(w, http.StatusUnauthorized, "authentication not configured")
+				return
+			}
+
 			auth := r.Header.Get("Authorization")
 			if auth == "" {
 				writeError(w, http.StatusUnauthorized, "authentication required")

@@ -135,7 +135,7 @@ func (h *AlertHandler) acknowledge(w http.ResponseWriter, r *http.Request) {
 		AlertID: id,
 		Event:   "acknowledged",
 		Message: "Alert acknowledged",
-		UserID:  req.UserID,
+		UserID:  &req.UserID,
 	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "acknowledged"})

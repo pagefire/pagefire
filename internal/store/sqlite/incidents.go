@@ -12,25 +12,41 @@ type incidentStore struct {
 	db *sql.DB
 }
 
+func nullString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
+}
+
+func fromNullString(ns sql.NullString) string {
+	if ns.Valid {
+		return ns.String
+	}
+	return ""
+}
+
 func (s *incidentStore) Create(ctx context.Context, inc *store.Incident) error {
 	if inc.ID == "" {
 		inc.ID = uuid.NewString()
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO incidents (id, title, status, severity, summary, source, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		inc.ID, inc.Title, inc.Status, inc.Severity, inc.Summary, inc.Source, inc.CreatedBy,
+		inc.ID, inc.Title, inc.Status, inc.Severity, inc.Summary, inc.Source, nullString(inc.CreatedBy),
 	)
 	return err
 }
 
 func (s *incidentStore) Get(ctx context.Context, id string) (*store.Incident, error) {
 	inc := &store.Incident{}
+	var createdBy sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, title, status, severity, summary, source, created_by, created_at, resolved_at FROM incidents WHERE id = ?`, id,
-	).Scan(&inc.ID, &inc.Title, &inc.Status, &inc.Severity, &inc.Summary, &inc.Source, &inc.CreatedBy, &inc.CreatedAt, &inc.ResolvedAt)
+	).Scan(&inc.ID, &inc.Title, &inc.Status, &inc.Severity, &inc.Summary, &inc.Source, &createdBy, &inc.CreatedAt, &inc.ResolvedAt)
 	if err == sql.ErrNoRows {
 		return nil, store.ErrNotFound
 	}
+	inc.CreatedBy = fromNullString(createdBy)
 	return inc, err
 }
 
@@ -63,9 +79,11 @@ func (s *incidentStore) List(ctx context.Context, filter store.IncidentFilter) (
 	var incidents []store.Incident
 	for rows.Next() {
 		var inc store.Incident
-		if err := rows.Scan(&inc.ID, &inc.Title, &inc.Status, &inc.Severity, &inc.Summary, &inc.Source, &inc.CreatedBy, &inc.CreatedAt, &inc.ResolvedAt); err != nil {
+		var createdBy sql.NullString
+		if err := rows.Scan(&inc.ID, &inc.Title, &inc.Status, &inc.Severity, &inc.Summary, &inc.Source, &createdBy, &inc.CreatedAt, &inc.ResolvedAt); err != nil {
 			return nil, err
 		}
+		inc.CreatedBy = fromNullString(createdBy)
 		incidents = append(incidents, inc)
 	}
 	return incidents, rows.Err()
@@ -120,7 +138,7 @@ func (s *incidentStore) CreateUpdate(ctx context.Context, u *store.IncidentUpdat
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO incident_updates (id, incident_id, status, message, created_by) VALUES (?, ?, ?, ?, ?)`,
-		u.ID, u.IncidentID, u.Status, u.Message, u.CreatedBy,
+		u.ID, u.IncidentID, u.Status, u.Message, nullString(u.CreatedBy),
 	)
 	return err
 }
@@ -137,9 +155,11 @@ func (s *incidentStore) ListUpdates(ctx context.Context, incidentID string) ([]s
 	var updates []store.IncidentUpdate
 	for rows.Next() {
 		var u store.IncidentUpdate
-		if err := rows.Scan(&u.ID, &u.IncidentID, &u.Status, &u.Message, &u.CreatedBy, &u.CreatedAt); err != nil {
+		var createdBy sql.NullString
+		if err := rows.Scan(&u.ID, &u.IncidentID, &u.Status, &u.Message, &createdBy, &u.CreatedAt); err != nil {
 			return nil, err
 		}
+		u.CreatedBy = fromNullString(createdBy)
 		updates = append(updates, u)
 	}
 	return updates, rows.Err()

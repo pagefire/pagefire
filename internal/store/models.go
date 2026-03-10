@@ -173,7 +173,7 @@ type Alert struct {
 	EscalationStep           int        `json:"escalation_step"`
 	LoopCount                int        `json:"loop_count"`
 	NextEscalationAt         *time.Time `json:"next_escalation_at,omitempty"`
-	AcknowledgedBy           string     `json:"acknowledged_by,omitempty"`
+	AcknowledgedBy           *string    `json:"acknowledged_by,omitempty"`
 	AcknowledgedAt           *time.Time `json:"acknowledged_at,omitempty"`
 	ResolvedAt               *time.Time `json:"resolved_at,omitempty"`
 	CreatedAt                time.Time  `json:"created_at"`
@@ -185,7 +185,7 @@ type AlertLog struct {
 	AlertID   string    `json:"alert_id"`
 	Event     string    `json:"event"` // "created", "escalated", "acknowledged", "resolved"
 	Message   string    `json:"message"`
-	UserID    string    `json:"user_id,omitempty"`
+	UserID    *string   `json:"user_id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
