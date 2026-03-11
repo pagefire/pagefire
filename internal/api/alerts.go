@@ -35,6 +35,7 @@ type createAlertRequest struct {
 	Summary          string `json:"summary"`
 	Details          string `json:"details"`
 	DeduplicationKey string `json:"dedup_key"`
+	GroupKey         string `json:"group_key"`
 }
 
 func (h *AlertHandler) create(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +74,7 @@ func (h *AlertHandler) create(w http.ResponseWriter, r *http.Request) {
 		Details:                  req.Details,
 		Source:                   "api",
 		DeduplicationKey:         req.DeduplicationKey,
+		GroupKey:                 req.GroupKey,
 		EscalationPolicySnapshot: string(snapshotJSON),
 		NextEscalationAt:         &now,
 	}
@@ -105,6 +107,7 @@ func (h *AlertHandler) list(w http.ResponseWriter, r *http.Request) {
 	filter := store.AlertFilter{
 		Status:    r.URL.Query().Get("status"),
 		ServiceID: r.URL.Query().Get("service_id"),
+		GroupKey:  r.URL.Query().Get("group_key"),
 		Limit:     limit,
 		Offset:    offset,
 	}

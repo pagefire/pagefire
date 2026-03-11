@@ -187,6 +187,7 @@ type Alert struct {
 	Details                  string     `json:"details,omitempty"`
 	Source                   string     `json:"source"` // "api", "integration", "monitor"
 	DeduplicationKey         string     `json:"dedup_key,omitempty"`
+	GroupKey                 string     `json:"group_key,omitempty"`
 	EscalationPolicySnapshot string     `json:"escalation_policy_snapshot"` // JSON blob
 	EscalationStep           int        `json:"escalation_step"`
 	LoopCount                int        `json:"loop_count"`
@@ -299,6 +300,7 @@ type RoutingRule struct {
 type AlertFilter struct {
 	Status    string `json:"status,omitempty"`
 	ServiceID string `json:"service_id,omitempty"`
+	GroupKey  string `json:"group_key,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 	Offset    int    `json:"offset,omitempty"`
 }

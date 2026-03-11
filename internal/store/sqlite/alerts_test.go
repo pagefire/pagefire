@@ -200,7 +200,8 @@ func TestListWithStatusFilter(t *testing.T) {
 func TestListWithServiceFilter(t *testing.T) {
 	s := newTestStore(t)
 	svc1 := createTestService(t, s)
-	svc2 := &store.Service{Name: "test-svc-2", EscalationPolicyID: "ep-2"}
+	ep2 := createTestEscalationPolicy(t, s, "ep-svc2")
+	svc2 := &store.Service{Name: "test-svc-2", EscalationPolicyID: ep2.ID}
 	if err := s.Services().Create(context.Background(), svc2); err != nil {
 		t.Fatalf("creating second service: %v", err)
 	}
@@ -529,5 +530,166 @@ func TestGetNonExistentAlert(t *testing.T) {
 	_, err := alerts.Get(context.Background(), "nonexistent")
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// --- Alert Grouping Tests ---
+
+func TestAlertGrouping_SuppressesEscalation(t *testing.T) {
+	s := newTestStore(t)
+	svc := createTestService(t, s)
+	ctx := context.Background()
+
+	a1 := &store.Alert{
+		ServiceID: svc.ID, Summary: "cpu high on host-1", Source: "api",
+		GroupKey: "cpu-high", EscalationPolicySnapshot: "{}",
+	}
+	if err := s.Alerts().Create(ctx, a1); err != nil {
+		t.Fatalf("create first: %v", err)
+	}
+	got1, _ := s.Alerts().Get(ctx, a1.ID)
+	if got1.NextEscalationAt == nil {
+		t.Fatal("first grouped alert should have next_escalation_at set")
+	}
+	if got1.GroupKey != "cpu-high" {
+		t.Errorf("group_key = %q, want %q", got1.GroupKey, "cpu-high")
+	}
+
+	a2 := &store.Alert{
+		ServiceID: svc.ID, Summary: "cpu high on host-2", Source: "api",
+		GroupKey: "cpu-high", EscalationPolicySnapshot: "{}",
+	}
+	if err := s.Alerts().Create(ctx, a2); err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+	got2, _ := s.Alerts().Get(ctx, a2.ID)
+	if got2.NextEscalationAt != nil {
+		t.Fatal("second grouped alert should have next_escalation_at suppressed (nil)")
+	}
+	if a1.ID == a2.ID {
+		t.Fatal("grouped alerts should have different IDs")
+	}
+}
+
+func TestAlertGrouping_DifferentGroupKeys(t *testing.T) {
+	s := newTestStore(t)
+	svc := createTestService(t, s)
+	ctx := context.Background()
+
+	a1 := &store.Alert{ServiceID: svc.ID, Summary: "cpu high", Source: "api", GroupKey: "cpu", EscalationPolicySnapshot: "{}"}
+	a2 := &store.Alert{ServiceID: svc.ID, Summary: "disk full", Source: "api", GroupKey: "disk", EscalationPolicySnapshot: "{}"}
+	s.Alerts().Create(ctx, a1)
+	s.Alerts().Create(ctx, a2)
+
+	got1, _ := s.Alerts().Get(ctx, a1.ID)
+	got2, _ := s.Alerts().Get(ctx, a2.ID)
+	if got1.NextEscalationAt == nil {
+		t.Error("alert with group_key=cpu should escalate")
+	}
+	if got2.NextEscalationAt == nil {
+		t.Error("alert with group_key=disk should escalate (different group)")
+	}
+}
+
+func TestAlertGrouping_ResolvedGroupAllowsNewEscalation(t *testing.T) {
+	s := newTestStore(t)
+	svc := createTestService(t, s)
+	ctx := context.Background()
+
+	a1 := &store.Alert{ServiceID: svc.ID, Summary: "cpu high", Source: "api", GroupKey: "cpu", EscalationPolicySnapshot: "{}"}
+	s.Alerts().Create(ctx, a1)
+	s.Alerts().Resolve(ctx, a1.ID)
+
+	a2 := &store.Alert{ServiceID: svc.ID, Summary: "cpu high again", Source: "api", GroupKey: "cpu", EscalationPolicySnapshot: "{}"}
+	if err := s.Alerts().Create(ctx, a2); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, _ := s.Alerts().Get(ctx, a2.ID)
+	if got.NextEscalationAt == nil {
+		t.Fatal("new alert in resolved group should escalate")
+	}
+}
+
+func TestAlertGrouping_DifferentServicesAreIndependent(t *testing.T) {
+	s := newTestStore(t)
+	svc1 := createTestService(t, s)
+	ep2 := createTestEscalationPolicy(t, s, "ep-grp-2")
+	svc2 := &store.Service{Name: "svc-grp-2", EscalationPolicyID: ep2.ID}
+	s.Services().Create(context.Background(), svc2)
+	ctx := context.Background()
+
+	a1 := &store.Alert{ServiceID: svc1.ID, Summary: "cpu high", Source: "api", GroupKey: "cpu", EscalationPolicySnapshot: "{}"}
+	s.Alerts().Create(ctx, a1)
+
+	a2 := &store.Alert{ServiceID: svc2.ID, Summary: "cpu high", Source: "api", GroupKey: "cpu", EscalationPolicySnapshot: "{}"}
+	s.Alerts().Create(ctx, a2)
+
+	got, _ := s.Alerts().Get(ctx, a2.ID)
+	if got.NextEscalationAt == nil {
+		t.Fatal("alert on different service should escalate even with same group_key")
+	}
+}
+
+func TestAlertGrouping_EmptyGroupKeyDoesNotGroup(t *testing.T) {
+	s := newTestStore(t)
+	svc := createTestService(t, s)
+	ctx := context.Background()
+
+	a1 := &store.Alert{ServiceID: svc.ID, Summary: "alert 1", Source: "api", EscalationPolicySnapshot: "{}"}
+	a2 := &store.Alert{ServiceID: svc.ID, Summary: "alert 2", Source: "api", EscalationPolicySnapshot: "{}"}
+	s.Alerts().Create(ctx, a1)
+	s.Alerts().Create(ctx, a2)
+
+	got1, _ := s.Alerts().Get(ctx, a1.ID)
+	got2, _ := s.Alerts().Get(ctx, a2.ID)
+	if got1.NextEscalationAt == nil || got2.NextEscalationAt == nil {
+		t.Fatal("alerts without group_key should both escalate")
+	}
+}
+
+func TestAlertListFilterByGroupKey(t *testing.T) {
+	s := newTestStore(t)
+	svc := createTestService(t, s)
+	ctx := context.Background()
+
+	for _, gk := range []string{"cpu", "cpu", "disk"} {
+		a := &store.Alert{ServiceID: svc.ID, Summary: gk + " alert", Source: "api", GroupKey: gk, EscalationPolicySnapshot: "{}"}
+		s.Alerts().Create(ctx, a)
+	}
+
+	alerts, err := s.Alerts().List(ctx, store.AlertFilter{GroupKey: "cpu"})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(alerts) != 2 {
+		t.Errorf("got %d alerts, want 2", len(alerts))
+	}
+	for _, a := range alerts {
+		if a.GroupKey != "cpu" {
+			t.Errorf("group_key = %q, want %q", a.GroupKey, "cpu")
+		}
+	}
+}
+
+func TestAlertFindPendingEscalations_ExcludesSuppressed(t *testing.T) {
+	s := newTestStore(t)
+	svc := createTestService(t, s)
+	ctx := context.Background()
+
+	a1 := &store.Alert{ServiceID: svc.ID, Summary: "first", Source: "api", GroupKey: "grp", EscalationPolicySnapshot: "{}"}
+	s.Alerts().Create(ctx, a1)
+
+	a2 := &store.Alert{ServiceID: svc.ID, Summary: "second", Source: "api", GroupKey: "grp", EscalationPolicySnapshot: "{}"}
+	s.Alerts().Create(ctx, a2)
+
+	pending, err := s.Alerts().FindPendingEscalations(ctx, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("find pending: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("got %d pending, want 1", len(pending))
+	}
+	if pending[0].ID != a1.ID {
+		t.Errorf("pending alert ID = %q, want %q", pending[0].ID, a1.ID)
 	}
 }

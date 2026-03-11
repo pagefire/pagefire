@@ -32,6 +32,7 @@ type genericWebhookRequest struct {
 	Summary          string `json:"summary"`
 	Details          string `json:"details"`
 	DeduplicationKey string `json:"dedup_key"`
+	GroupKey         string `json:"group_key"`
 }
 
 func (h *IntegrationHandler) genericWebhook(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +52,7 @@ func (h *IntegrationHandler) genericWebhook(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	alert, err := h.createAlertFromIntegration(r, ik, req.Summary, req.Details, req.DeduplicationKey)
+	alert, err := h.createAlertFromIntegration(r, ik, req.Summary, req.Details, req.DeduplicationKey, req.GroupKey)
 	if err != nil {
 		if errors.Is(err, store.ErrDuplicateKey) && alert != nil {
 			writeJSON(w, http.StatusOK, alert)
@@ -86,7 +87,7 @@ func (h *IntegrationHandler) grafanaWebhook(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	alert, err := h.createAlertFromIntegration(r, ik, payload.Title, payload.Message, "grafana:"+payload.RuleID)
+	alert, err := h.createAlertFromIntegration(r, ik, payload.Title, payload.Message, "grafana:"+payload.RuleID, "")
 	if err != nil {
 		handleStoreError(w, err)
 		return
@@ -124,13 +125,13 @@ func (h *IntegrationHandler) prometheusWebhook(w http.ResponseWriter, r *http.Re
 			summary = a.Labels["alertname"]
 		}
 
-		h.createAlertFromIntegration(r, ik, summary, a.Annotations["description"], "prometheus:"+a.Fingerprint)
+		h.createAlertFromIntegration(r, ik, summary, a.Annotations["description"], "prometheus:"+a.Fingerprint, "")
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (h *IntegrationHandler) createAlertFromIntegration(r *http.Request, ik *store.IntegrationKey, summary, details, dedupKey string) (*store.Alert, error) {
+func (h *IntegrationHandler) createAlertFromIntegration(r *http.Request, ik *store.IntegrationKey, summary, details, dedupKey, groupKey string) (*store.Alert, error) {
 	svc, err := h.services.Get(r.Context(), ik.ServiceID)
 	if err != nil {
 		return nil, err
@@ -154,6 +155,7 @@ func (h *IntegrationHandler) createAlertFromIntegration(r *http.Request, ik *sto
 		Details:                  details,
 		Source:                   "integration",
 		DeduplicationKey:         dedupKey,
+		GroupKey:                 groupKey,
 		EscalationPolicySnapshot: string(snapshotJSON),
 		NextEscalationAt:         &now,
 	}

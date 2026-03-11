@@ -45,10 +45,11 @@ func createTestEscalationPolicy(t *testing.T, s *SQLiteStore, name string) *stor
 	return ep
 }
 
-// createTestService creates a service with a dummy escalation policy ID.
+// createTestService creates a service with a real escalation policy.
 func createTestService(t *testing.T, s *SQLiteStore) *store.Service {
 	t.Helper()
-	svc := &store.Service{Name: "test-svc", EscalationPolicyID: "ep-1"}
+	ep := createTestEscalationPolicy(t, s, "test-ep")
+	svc := &store.Service{Name: "test-svc", EscalationPolicyID: ep.ID}
 	if err := s.Services().Create(context.Background(), svc); err != nil {
 		t.Fatalf("creating test service: %v", err)
 	}
