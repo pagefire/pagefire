@@ -84,11 +84,37 @@ type RateLimiter struct {
 }
 
 func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
-	return &RateLimiter{
+	rl := &RateLimiter{
 		requests: make(map[string][]time.Time),
 		limit:    limit,
 		window:   window,
 	}
+
+	// Periodic cleanup of stale keys to prevent unbounded memory growth.
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			rl.mu.Lock()
+			cutoff := time.Now().Add(-rl.window)
+			for key, entries := range rl.requests {
+				// Remove keys with no recent requests.
+				hasRecent := false
+				for _, t := range entries {
+					if t.After(cutoff) {
+						hasRecent = true
+						break
+					}
+				}
+				if !hasRecent {
+					delete(rl.requests, key)
+				}
+			}
+			rl.mu.Unlock()
+		}
+	}()
+
+	return rl
 }
 
 func (rl *RateLimiter) Allow(key string) bool {

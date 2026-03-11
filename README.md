@@ -1,3 +1,10 @@
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go 1.22+">
+  <img src="https://img.shields.io/badge/SQLite-embedded-003B57?style=flat&logo=sqlite&logoColor=white" alt="SQLite">
+  <img src="https://img.shields.io/badge/license-MIT-green?style=flat" alt="MIT License">
+  <img src="https://img.shields.io/badge/status-pre--release-orange?style=flat" alt="Pre-release">
+</p>
+
 # PageFire
 
 Open-source incident management platform. On-call scheduling, alert escalation, and notifications in a single Go binary.
@@ -6,27 +13,42 @@ Open-source incident management platform. On-call scheduling, alert escalation, 
 
 ## Why PageFire?
 
-- **Single binary** — no Docker compose, no 8GB RAM minimum, no microservices. Just download and run.
-- **SQLite by default** — zero-dependency setup. Postgres support planned.
-- **Opinionated simplicity** — on-call + alerts + escalation. No APM, no logs, no traces.
+| | PageFire | PagerDuty | Grafana OnCall | OneUptime |
+|---|---|---|---|---|
+| **Deployment** | Single binary | SaaS only | Archived (March 2026) | 10+ Docker containers |
+| **Database** | Embedded SQLite | N/A | PostgreSQL + Redis + RabbitMQ | PostgreSQL + Redis + ClickHouse |
+| **RAM required** | ~50 MB | N/A | ~2 GB | ~8 GB |
+| **License** | MIT | Proprietary | Apache 2.0 (archived) | MIT |
+| **Self-hosted** | Yes | No | No longer maintained | Yes (complex) |
+| **Pricing** | Free (self-host) | $21/user/mo+ | Free (unsupported) | $120/mo+ |
+
+## Features
+
+- **Alert management** — create, acknowledge, resolve, with full audit log
+- **Alert deduplication** — `dedup_key` prevents duplicate alerts for the same issue
+- **Alert grouping** — `group_key` groups related alerts; only the first triggers escalation
+- **Content-based routing** — route alerts to different escalation policies based on summary, details, or source (contains or regex match)
+- **Escalation policies** — multi-step escalation with configurable delays and repeat loops
+- **On-call schedules** — daily/weekly/custom rotations with participant ordering
+- **Schedule overrides** — temporary user swaps for PTO, handoffs, etc.
+- **Teams** — organize users, services, policies, and schedules by team
+- **Incidents** — track multi-service outages with timeline updates
+- **Notifications** — email (SMTP), Slack DM, and webhook dispatch
+- **Inbound integrations** — generic webhook, Grafana, and Prometheus Alertmanager
 
 ## Status
 
 **Pre-release / active development.** Not yet ready for production use.
 
-Current: on-call engine, alert escalation, teams, notification dispatch (email, webhook, Slack).
-
 ## Quick Start
 
 ### 1. Build
-
-Requires Go 1.22+.
 
 ```bash
 make build
 ```
 
-Or download a [pre-built binary](https://github.com/pagefire/pagefire/releases) for your platform.
+Or download a [pre-built binary](https://github.com/pagefire/pagefire/releases) for your platform. Requires Go 1.22+ to build from source.
 
 ### 2. Pick an admin token
 
@@ -108,6 +130,8 @@ All configuration is via environment variables with the `PAGEFIRE_` prefix.
 
 All endpoints require `Authorization: Bearer <your-token>` except health check and integration webhooks.
 
+All list endpoints support `?limit=` and `?offset=` query parameters for pagination (max 1000 results).
+
 ```
 GET  /healthz                                    # Health check (no auth)
 
@@ -119,48 +143,72 @@ POST /api/v1/integrations/{key}/prometheus       # Prometheus Alertmanager webho
 # Teams
 GET/POST       /api/v1/teams
 GET/PUT/DELETE /api/v1/teams/{id}
-POST/GET       /api/v1/teams/{id}/members
+GET/POST       /api/v1/teams/{id}/members
 DELETE         /api/v1/teams/{id}/members/{userID}
 
 # Users
-GET/POST       /api/v1/users
-GET/PUT        /api/v1/users/{id}
-POST           /api/v1/users/{id}/contact-methods
-POST           /api/v1/users/{id}/notification-rules
+GET/POST            /api/v1/users
+GET/PUT/DELETE      /api/v1/users/{id}
+GET/POST            /api/v1/users/{id}/contact-methods
+DELETE              /api/v1/users/{id}/contact-methods/{cmID}
+GET/POST            /api/v1/users/{id}/notification-rules
+DELETE              /api/v1/users/{id}/notification-rules/{ruleID}
 
 # Services (supports ?team_id= filter)
-GET/POST       /api/v1/services
-GET/PUT/DELETE /api/v1/services/{id}
-GET/POST       /api/v1/services/{id}/integration-keys
-GET/POST       /api/v1/services/{id}/routing-rules
-DELETE         /api/v1/services/{id}/routing-rules/{ruleID}
+GET/POST            /api/v1/services
+GET/PUT/DELETE      /api/v1/services/{id}
+GET/POST            /api/v1/services/{id}/integration-keys
+DELETE              /api/v1/services/{id}/integration-keys/{keyID}
+GET/POST            /api/v1/services/{id}/routing-rules
+DELETE              /api/v1/services/{id}/routing-rules/{ruleID}
 
 # Escalation Policies (supports ?team_id= filter)
-GET/POST       /api/v1/escalation-policies
-GET/PUT/DELETE /api/v1/escalation-policies/{id}
-GET/POST       /api/v1/escalation-policies/{id}/steps
-GET/POST       /api/v1/escalation-policies/{id}/steps/{stepID}/targets
+GET/POST            /api/v1/escalation-policies
+GET/PUT/DELETE      /api/v1/escalation-policies/{id}
+GET/POST            /api/v1/escalation-policies/{id}/steps
+DELETE              /api/v1/escalation-policies/{id}/steps/{stepID}
+GET/POST            /api/v1/escalation-policies/{id}/steps/{stepID}/targets
+DELETE              /api/v1/escalation-policies/{id}/steps/{stepID}/targets/{targetID}
 
 # Schedules (supports ?team_id= filter)
-GET/POST       /api/v1/schedules
-GET/PUT/DELETE /api/v1/schedules/{id}
-GET/POST       /api/v1/schedules/{id}/rotations
-GET/POST       /api/v1/schedules/{id}/overrides
+GET/POST            /api/v1/schedules
+GET/PUT/DELETE      /api/v1/schedules/{id}
+GET/POST            /api/v1/schedules/{id}/rotations
+DELETE              /api/v1/schedules/{id}/rotations/{rotID}
+GET/POST            /api/v1/schedules/{id}/rotations/{rotID}/participants
+DELETE              /api/v1/schedules/{id}/rotations/{rotID}/participants/{partID}
+GET/POST            /api/v1/schedules/{id}/overrides
+DELETE              /api/v1/schedules/{id}/overrides/{overrideID}
 
-# Alerts
-GET/POST       /api/v1/alerts
-GET            /api/v1/alerts/{id}
-POST           /api/v1/alerts/{id}/acknowledge
-POST           /api/v1/alerts/{id}/resolve
+# Alerts (supports ?status=, ?service_id=, ?group_key= filters)
+GET/POST            /api/v1/alerts
+GET                 /api/v1/alerts/{id}
+POST                /api/v1/alerts/{id}/acknowledge
+POST                /api/v1/alerts/{id}/resolve
+GET                 /api/v1/alerts/{id}/logs
 
-# Incidents
-GET/POST       /api/v1/incidents
-GET/PUT        /api/v1/incidents/{id}
-GET/POST       /api/v1/incidents/{id}/updates
+# Incidents (supports ?status= filter)
+GET/POST            /api/v1/incidents
+GET/PUT             /api/v1/incidents/{id}
+GET/POST            /api/v1/incidents/{id}/updates
 
 # On-Call
-GET            /api/v1/oncall/{scheduleID}
+GET                 /api/v1/oncall/{scheduleID}
 ```
+
+### Alert deduplication
+
+Send a `dedup_key` with your alert. If an active (non-resolved) alert already exists with the same `dedup_key` on the same service, the existing alert is returned instead of creating a duplicate.
+
+### Alert grouping
+
+Send a `group_key` with your alert. When multiple alerts share the same `group_key` on a service, only the first alert triggers escalation. Subsequent alerts in the group are created but their escalation is suppressed (no duplicate notifications). Once all alerts in the group are resolved, a new alert with the same `group_key` will escalate normally.
+
+### Content-based routing
+
+Create routing rules on a service to direct alerts to different escalation policies based on content. Rules are evaluated in priority order; the first match wins. If no rule matches, the service's default escalation policy is used.
+
+Supported match types: `contains` (case-insensitive) and `regex`.
 
 ## Project Structure
 
@@ -221,11 +269,17 @@ Both scripts clean up all processes and temp files on exit (Ctrl+C).
 Hardened against STRIDE threat model findings:
 - API token auth with constant-time comparison
 - Per-IP rate limiting (60/min integration, 1000/min API)
-- SSRF protection on all outbound webhooks
+- SSRF protection on all outbound webhooks (private IP blocking + DNS resolution)
 - Email header injection prevention
-- Integration key secrets masked in API responses
+- Integration key secrets masked in API responses (full secret shown once on creation)
 - Request body limits (1MB), query bounds (max 1000)
-- Security headers on all responses
+- Security headers on all responses (CSP, X-Frame-Options, X-Content-Type-Options)
+- Regex pattern validation at routing rule creation time
+- All SQL queries parameterized (no string concatenation)
+
+## Contributing
+
+Contributions are welcome! Please open an issue first to discuss what you'd like to change.
 
 ## License
 

@@ -9,10 +9,10 @@ This guide maps OnCall concepts to PageFire equivalents and walks you through re
 | Grafana OnCall | PageFire | Notes |
 |---|---|---|
 | Integration | Integration Key | Inbound webhook endpoint for a service |
-| Alert Group | Alert (with `dedup_key`) | Dedup groups alerts by key; grouping by attributes is on the roadmap |
+| Alert Group | Alert (with `dedup_key` + `group_key`) | Dedup prevents duplicates; `group_key` groups related alerts (only first escalates) |
 | Escalation Chain | Escalation Policy | Multi-step, with repeat/loop support |
 | Escalation Chain Step | Escalation Step + Targets | Steps target users or on-call schedules |
-| Route | — | Content-based routing is on the roadmap |
+| Route | Routing Rule | Content-based routing by summary, details, or source (contains/regex) |
 | Schedule | Schedule | Named on-call schedule with timezone |
 | On-Call Shift | Rotation | Daily, weekly, or custom-hour rotations |
 | Override | Schedule Override | Temporary user swap for a time window |
@@ -336,10 +336,8 @@ curl -s "$API/alerts" \
 - **Single admin token:** Instead of Grafana's user system, you set one API token via `PAGEFIRE_ADMIN_TOKEN` and include it in all requests. Per-user API tokens are on the roadmap.
 
 ### Features on the roadmap
-- Content-based alert routing (OnCall's "Routes")
-- Alert grouping by attributes
 - Self-service shift swaps
-- Team-based access control
+- Team-based access control (authorization layer)
 - Event-driven outgoing webhooks
 - Alert template customization
 - Frontend UI

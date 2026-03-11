@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/pagefire/pagefire/internal/api"
@@ -191,4 +192,162 @@ func TestSmoke_FullAlertFlow(t *testing.T) {
 	}
 
 	t.Log("smoke test passed: full alert lifecycle complete")
+}
+
+// TestSmoke_RoutingAndGrouping exercises routing rules and alert grouping end-to-end.
+func TestSmoke_RoutingAndGrouping(t *testing.T) {
+	ctx := context.Background()
+
+	s, err := sqlite.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	resolver := oncall.NewResolver(s.Schedules(), s.Users())
+	dispatcher := notification.NewDispatcher()
+	router := api.NewRouter(s, resolver, dispatcher, smokeToken)
+
+	do := func(method, path string, body any, token string) (int, map[string]any) {
+		t.Helper()
+		var req *http.Request
+		if body != nil {
+			b, _ := json.Marshal(body)
+			req = httptest.NewRequest(method, path, bytes.NewReader(b))
+			req.Header.Set("Content-Type", "application/json")
+		} else {
+			req = httptest.NewRequest(method, path, nil)
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		var result map[string]any
+		_ = json.NewDecoder(rr.Body).Decode(&result)
+		return rr.Code, result
+	}
+
+	doList := func(method, path string, body any, token string) (int, []map[string]any) {
+		t.Helper()
+		var req *http.Request
+		if body != nil {
+			b, _ := json.Marshal(body)
+			req = httptest.NewRequest(method, path, bytes.NewReader(b))
+			req.Header.Set("Content-Type", "application/json")
+		} else {
+			req = httptest.NewRequest(method, path, nil)
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		var result []map[string]any
+		_ = json.NewDecoder(rr.Body).Decode(&result)
+		return rr.Code, result
+	}
+
+	// 1. Create two escalation policies
+	code, body := do("POST", "/api/v1/escalation-policies", map[string]any{
+		"name": "Default", "repeat": 0,
+	}, smokeToken)
+	if code != 201 {
+		t.Fatalf("create default EP: %d — %v", code, body)
+	}
+	defaultEPID := body["id"].(string)
+
+	code, body = do("POST", "/api/v1/escalation-policies", map[string]any{
+		"name": "Database", "repeat": 0,
+	}, smokeToken)
+	if code != 201 {
+		t.Fatalf("create db EP: %d — %v", code, body)
+	}
+	dbEPID := body["id"].(string)
+
+	// 2. Create service with default EP
+	code, body = do("POST", "/api/v1/services", map[string]string{
+		"name": "API", "escalation_policy_id": defaultEPID,
+	}, smokeToken)
+	if code != 201 {
+		t.Fatalf("create service: %d — %v", code, body)
+	}
+	svcID := body["id"].(string)
+
+	// 3. Create routing rule: summary contains "database" → use DB EP
+	code, body = do("POST", "/api/v1/services/"+svcID+"/routing-rules", map[string]any{
+		"condition_field": "summary", "condition_match_type": "contains",
+		"condition_value": "database", "escalation_policy_id": dbEPID,
+	}, smokeToken)
+	if code != 201 {
+		t.Fatalf("create routing rule: %d — %v", code, body)
+	}
+
+	// 4. Create integration key
+	code, body = do("POST", "/api/v1/services/"+svcID+"/integration-keys", map[string]string{
+		"name": "Monitor",
+	}, smokeToken)
+	if code != 201 {
+		t.Fatalf("create integration key: %d — %v", code, body)
+	}
+	secret := body["secret"].(string)
+
+	// 5. Fire alert matching routing rule
+	code, body = do("POST", "/api/v1/integrations/"+secret+"/alerts", map[string]string{
+		"summary": "database connection timeout", "dedup_key": "db-1",
+	}, "")
+	if code != 201 {
+		t.Fatalf("fire routed alert: %d — %v", code, body)
+	}
+	snapshot := body["escalation_policy_snapshot"].(string)
+	if !strings.Contains(snapshot, dbEPID) {
+		t.Fatalf("routed alert should use DB EP, snapshot: %s", snapshot)
+	}
+
+	// 6. Fire alert NOT matching — should use default EP
+	code, body = do("POST", "/api/v1/integrations/"+secret+"/alerts", map[string]string{
+		"summary": "high CPU", "dedup_key": "cpu-1",
+	}, "")
+	if code != 201 {
+		t.Fatalf("fire default alert: %d — %v", code, body)
+	}
+	snapshot2 := body["escalation_policy_snapshot"].(string)
+	if !strings.Contains(snapshot2, defaultEPID) {
+		t.Fatalf("default alert should use default EP, snapshot: %s", snapshot2)
+	}
+
+	// 7. Alert grouping: fire two alerts with same group_key
+	code, body = do("POST", "/api/v1/integrations/"+secret+"/alerts", map[string]string{
+		"summary": "disk full host-1", "group_key": "disk-full",
+	}, "")
+	if code != 201 {
+		t.Fatalf("fire grouped alert 1: %d — %v", code, body)
+	}
+	groupAlert1ID := body["id"].(string)
+
+	code, body = do("POST", "/api/v1/integrations/"+secret+"/alerts", map[string]string{
+		"summary": "disk full host-2", "group_key": "disk-full",
+	}, "")
+	if code != 201 {
+		t.Fatalf("fire grouped alert 2: %d — %v", code, body)
+	}
+	groupAlert2ID := body["id"].(string)
+
+	if groupAlert1ID == groupAlert2ID {
+		t.Fatal("grouped alerts should have different IDs (not dedup)")
+	}
+
+	// 8. Filter by group_key
+	code, groupedAlerts := doList("GET", "/api/v1/alerts?group_key=disk-full", nil, smokeToken)
+	if code != 200 {
+		t.Fatalf("list alerts by group_key: want 200, got %d", code)
+	}
+	if len(groupedAlerts) != 2 {
+		t.Fatalf("expected 2 grouped alerts, got %d", len(groupedAlerts))
+	}
+
+	t.Log("smoke test passed: routing rules and alert grouping work end-to-end")
 }

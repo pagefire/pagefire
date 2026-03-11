@@ -855,6 +855,412 @@ func TestDeleteRoutingRule(t *testing.T) {
 	}
 }
 
+func TestCreateRoutingRuleInvalidRegex(t *testing.T) {
+	router, _ := newTestRouter(t)
+	svcID := createTestService(t, router)
+	epID := createTestEP(t, router)
+
+	body := map[string]any{
+		"condition_field":      "summary",
+		"condition_match_type": "regex",
+		"condition_value":      "[invalid(regex",
+		"escalation_policy_id": epID,
+	}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/services/"+svcID+"/routing-rules", body, testToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("POST routing-rules with invalid regex: want 400, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreateRoutingRuleValueTooLong(t *testing.T) {
+	router, _ := newTestRouter(t)
+	svcID := createTestService(t, router)
+	epID := createTestEP(t, router)
+
+	body := map[string]any{
+		"condition_field":      "summary",
+		"condition_match_type": "contains",
+		"condition_value":      strings.Repeat("x", 1025),
+		"escalation_policy_id": epID,
+	}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/services/"+svcID+"/routing-rules", body, testToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("POST routing-rules with long value: want 400, got %d", rr.Code)
+	}
+}
+
+// --- Alert API tests ---
+
+func TestCreateAlert(t *testing.T) {
+	router, s := newTestRouter(t)
+	ctx := context.Background()
+
+	ep := &store.EscalationPolicy{Name: "EP"}
+	s.EscalationPolicies().Create(ctx, ep)
+	svc := &store.Service{Name: "Svc", EscalationPolicyID: ep.ID}
+	s.Services().Create(ctx, svc)
+
+	body := map[string]string{
+		"service_id": svc.ID,
+		"summary":    "disk full",
+	}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/alerts", body, testToken)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("POST /api/v1/alerts: want 201, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var alert map[string]any
+	decodeBody(t, rr, &alert)
+	if alert["id"] == nil || alert["id"] == "" {
+		t.Fatal("response missing id")
+	}
+	if alert["status"] != "triggered" {
+		t.Errorf("status = %v, want triggered", alert["status"])
+	}
+}
+
+func TestCreateAlertMissingFields(t *testing.T) {
+	router, _ := newTestRouter(t)
+	body := map[string]string{"summary": "no service"}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/alerts", body, testToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("POST alert without service_id: want 400, got %d", rr.Code)
+	}
+}
+
+func TestGetAlert(t *testing.T) {
+	router, s := newTestRouter(t)
+	ctx := context.Background()
+
+	ep := &store.EscalationPolicy{Name: "EP"}
+	s.EscalationPolicies().Create(ctx, ep)
+	svc := &store.Service{Name: "Svc", EscalationPolicyID: ep.ID}
+	s.Services().Create(ctx, svc)
+
+	body := map[string]string{"service_id": svc.ID, "summary": "test"}
+	createRR := doRequest(t, router, http.MethodPost, "/api/v1/alerts", body, testToken)
+	var created map[string]any
+	decodeBody(t, createRR, &created)
+	id := created["id"].(string)
+
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/alerts/"+id, nil, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/alerts/%s: want 200, got %d", id, rr.Code)
+	}
+	var alert map[string]any
+	decodeBody(t, rr, &alert)
+	if alert["summary"] != "test" {
+		t.Errorf("summary = %v, want test", alert["summary"])
+	}
+}
+
+func TestGetAlertNotFound(t *testing.T) {
+	router, _ := newTestRouter(t)
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/alerts/nonexistent", nil, testToken)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("GET /api/v1/alerts/nonexistent: want 404, got %d", rr.Code)
+	}
+}
+
+func TestListAlerts(t *testing.T) {
+	router, s := newTestRouter(t)
+	ctx := context.Background()
+
+	ep := &store.EscalationPolicy{Name: "EP"}
+	s.EscalationPolicies().Create(ctx, ep)
+	svc := &store.Service{Name: "Svc", EscalationPolicyID: ep.ID}
+	s.Services().Create(ctx, svc)
+
+	for i := 0; i < 3; i++ {
+		body := map[string]string{"service_id": svc.ID, "summary": "alert"}
+		doRequest(t, router, http.MethodPost, "/api/v1/alerts", body, testToken)
+	}
+
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/alerts", nil, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/alerts: want 200, got %d", rr.Code)
+	}
+	var alerts []map[string]any
+	decodeBody(t, rr, &alerts)
+	if len(alerts) != 3 {
+		t.Errorf("expected 3 alerts, got %d", len(alerts))
+	}
+}
+
+func TestListAlertsFilterByStatus(t *testing.T) {
+	router, s := newTestRouter(t)
+	ctx := context.Background()
+
+	ep := &store.EscalationPolicy{Name: "EP"}
+	s.EscalationPolicies().Create(ctx, ep)
+	svc := &store.Service{Name: "Svc", EscalationPolicyID: ep.ID}
+	s.Services().Create(ctx, svc)
+
+	body := map[string]string{"service_id": svc.ID, "summary": "alert"}
+	createRR := doRequest(t, router, http.MethodPost, "/api/v1/alerts", body, testToken)
+	var created map[string]any
+	decodeBody(t, createRR, &created)
+
+	// Resolve it
+	doRequest(t, router, http.MethodPost, "/api/v1/alerts/"+created["id"].(string)+"/resolve", map[string]string{}, testToken)
+
+	// Create another (stays triggered)
+	doRequest(t, router, http.MethodPost, "/api/v1/alerts", map[string]string{"service_id": svc.ID, "summary": "alert2"}, testToken)
+
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/alerts?status=triggered", nil, testToken)
+	var alerts []map[string]any
+	decodeBody(t, rr, &alerts)
+	if len(alerts) != 1 {
+		t.Errorf("expected 1 triggered alert, got %d", len(alerts))
+	}
+}
+
+func TestAcknowledgeAlert(t *testing.T) {
+	router, s := newTestRouter(t)
+	ctx := context.Background()
+
+	ep := &store.EscalationPolicy{Name: "EP"}
+	s.EscalationPolicies().Create(ctx, ep)
+	svc := &store.Service{Name: "Svc", EscalationPolicyID: ep.ID}
+	s.Services().Create(ctx, svc)
+	u := &store.User{Name: "Acker", Email: "acker@test.com", Role: "user", Timezone: "UTC"}
+	s.Users().Create(ctx, u)
+
+	body := map[string]string{"service_id": svc.ID, "summary": "ack-me"}
+	createRR := doRequest(t, router, http.MethodPost, "/api/v1/alerts", body, testToken)
+	var created map[string]any
+	decodeBody(t, createRR, &created)
+	id := created["id"].(string)
+
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/alerts/"+id+"/acknowledge", map[string]string{"user_id": u.ID}, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST acknowledge: want 200, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify status
+	getRR := doRequest(t, router, http.MethodGet, "/api/v1/alerts/"+id, nil, testToken)
+	var alert map[string]any
+	decodeBody(t, getRR, &alert)
+	if alert["status"] != "acknowledged" {
+		t.Errorf("status = %v, want acknowledged", alert["status"])
+	}
+}
+
+func TestResolveAlert(t *testing.T) {
+	router, s := newTestRouter(t)
+	ctx := context.Background()
+
+	ep := &store.EscalationPolicy{Name: "EP"}
+	s.EscalationPolicies().Create(ctx, ep)
+	svc := &store.Service{Name: "Svc", EscalationPolicyID: ep.ID}
+	s.Services().Create(ctx, svc)
+
+	body := map[string]string{"service_id": svc.ID, "summary": "resolve-me"}
+	createRR := doRequest(t, router, http.MethodPost, "/api/v1/alerts", body, testToken)
+	var created map[string]any
+	decodeBody(t, createRR, &created)
+	id := created["id"].(string)
+
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/alerts/"+id+"/resolve", nil, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST resolve: want 200, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+
+	getRR := doRequest(t, router, http.MethodGet, "/api/v1/alerts/"+id, nil, testToken)
+	var alert map[string]any
+	decodeBody(t, getRR, &alert)
+	if alert["status"] != "resolved" {
+		t.Errorf("status = %v, want resolved", alert["status"])
+	}
+}
+
+func TestListAlertLogs(t *testing.T) {
+	router, s := newTestRouter(t)
+	ctx := context.Background()
+
+	ep := &store.EscalationPolicy{Name: "EP"}
+	s.EscalationPolicies().Create(ctx, ep)
+	svc := &store.Service{Name: "Svc", EscalationPolicyID: ep.ID}
+	s.Services().Create(ctx, svc)
+
+	body := map[string]string{"service_id": svc.ID, "summary": "log-test"}
+	createRR := doRequest(t, router, http.MethodPost, "/api/v1/alerts", body, testToken)
+	var created map[string]any
+	decodeBody(t, createRR, &created)
+	id := created["id"].(string)
+
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/alerts/"+id+"/logs", nil, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET alert logs: want 200, got %d", rr.Code)
+	}
+	var logs []map[string]any
+	decodeBody(t, rr, &logs)
+	if len(logs) < 1 {
+		t.Error("expected at least 1 log entry (created)")
+	}
+}
+
+func TestCreateAlertWithGroupKey(t *testing.T) {
+	router, s := newTestRouter(t)
+	ctx := context.Background()
+
+	ep := &store.EscalationPolicy{Name: "EP"}
+	s.EscalationPolicies().Create(ctx, ep)
+	svc := &store.Service{Name: "Svc", EscalationPolicyID: ep.ID}
+	s.Services().Create(ctx, svc)
+
+	// First alert in group
+	body := map[string]string{"service_id": svc.ID, "summary": "cpu high host-1", "group_key": "cpu-high"}
+	rr1 := doRequest(t, router, http.MethodPost, "/api/v1/alerts", body, testToken)
+	if rr1.Code != http.StatusCreated {
+		t.Fatalf("first alert: want 201, got %d", rr1.Code)
+	}
+
+	// Second alert in same group
+	body2 := map[string]string{"service_id": svc.ID, "summary": "cpu high host-2", "group_key": "cpu-high"}
+	rr2 := doRequest(t, router, http.MethodPost, "/api/v1/alerts", body2, testToken)
+	if rr2.Code != http.StatusCreated {
+		t.Fatalf("second alert: want 201, got %d", rr2.Code)
+	}
+
+	var a1, a2 map[string]any
+	decodeBody(t, rr1, &a1)
+	decodeBody(t, rr2, &a2)
+
+	// Different IDs (not dedup)
+	if a1["id"] == a2["id"] {
+		t.Error("grouped alerts should have different IDs")
+	}
+
+	// Filter by group_key
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/alerts?group_key=cpu-high", nil, testToken)
+	var alerts []map[string]any
+	decodeBody(t, rr, &alerts)
+	if len(alerts) != 2 {
+		t.Errorf("expected 2 alerts with group_key=cpu-high, got %d", len(alerts))
+	}
+}
+
+// --- Incident API tests ---
+
+func TestCreateIncident(t *testing.T) {
+	router, _ := newTestRouter(t)
+	body := map[string]string{"title": "Major outage", "severity": "critical"}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/incidents", body, testToken)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("POST /api/v1/incidents: want 201, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+	var inc map[string]any
+	decodeBody(t, rr, &inc)
+	if inc["id"] == nil || inc["id"] == "" {
+		t.Fatal("response missing id")
+	}
+	if inc["status"] != "triggered" {
+		t.Errorf("status = %v, want triggered", inc["status"])
+	}
+}
+
+func TestCreateIncidentMissingTitle(t *testing.T) {
+	router, _ := newTestRouter(t)
+	body := map[string]string{"severity": "critical"}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/incidents", body, testToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("POST incident without title: want 400, got %d", rr.Code)
+	}
+}
+
+func TestGetIncident(t *testing.T) {
+	router, _ := newTestRouter(t)
+	body := map[string]string{"title": "Outage"}
+	createRR := doRequest(t, router, http.MethodPost, "/api/v1/incidents", body, testToken)
+	var created map[string]any
+	decodeBody(t, createRR, &created)
+	id := created["id"].(string)
+
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/incidents/"+id, nil, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/incidents/%s: want 200, got %d", id, rr.Code)
+	}
+}
+
+func TestGetIncidentNotFound(t *testing.T) {
+	router, _ := newTestRouter(t)
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/incidents/nonexistent", nil, testToken)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("GET /api/v1/incidents/nonexistent: want 404, got %d", rr.Code)
+	}
+}
+
+func TestListIncidents(t *testing.T) {
+	router, _ := newTestRouter(t)
+	doRequest(t, router, http.MethodPost, "/api/v1/incidents", map[string]string{"title": "Inc 1"}, testToken)
+	doRequest(t, router, http.MethodPost, "/api/v1/incidents", map[string]string{"title": "Inc 2"}, testToken)
+
+	rr := doRequest(t, router, http.MethodGet, "/api/v1/incidents", nil, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/incidents: want 200, got %d", rr.Code)
+	}
+	var incidents []map[string]any
+	decodeBody(t, rr, &incidents)
+	if len(incidents) < 2 {
+		t.Errorf("expected at least 2 incidents, got %d", len(incidents))
+	}
+}
+
+func TestUpdateIncident(t *testing.T) {
+	router, _ := newTestRouter(t)
+	createRR := doRequest(t, router, http.MethodPost, "/api/v1/incidents", map[string]string{"title": "Outage"}, testToken)
+	var created map[string]any
+	decodeBody(t, createRR, &created)
+	id := created["id"].(string)
+
+	rr := doRequest(t, router, http.MethodPut, "/api/v1/incidents/"+id, map[string]string{
+		"title": "Outage Updated", "status": "investigating", "severity": "major",
+	}, testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("PUT /api/v1/incidents/%s: want 200, got %d; body: %s", id, rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreateIncidentUpdate(t *testing.T) {
+	router, _ := newTestRouter(t)
+	createRR := doRequest(t, router, http.MethodPost, "/api/v1/incidents", map[string]string{"title": "Outage"}, testToken)
+	var created map[string]any
+	decodeBody(t, createRR, &created)
+	id := created["id"].(string)
+
+	body := map[string]string{"status": "investigating", "message": "Looking into it"}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/incidents/"+id+"/updates", body, testToken)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("POST incident update: want 201, got %d; body: %s", rr.Code, rr.Body.String())
+	}
+
+	// List updates
+	listRR := doRequest(t, router, http.MethodGet, "/api/v1/incidents/"+id+"/updates", nil, testToken)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("GET incident updates: want 200, got %d", listRR.Code)
+	}
+	var updates []map[string]any
+	decodeBody(t, listRR, &updates)
+	if len(updates) != 1 {
+		t.Errorf("expected 1 update, got %d", len(updates))
+	}
+}
+
+func TestCreateIncidentUpdateMissingFields(t *testing.T) {
+	router, _ := newTestRouter(t)
+	createRR := doRequest(t, router, http.MethodPost, "/api/v1/incidents", map[string]string{"title": "Outage"}, testToken)
+	var created map[string]any
+	decodeBody(t, createRR, &created)
+	id := created["id"].(string)
+
+	// Missing message
+	body := map[string]string{"status": "investigating"}
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/incidents/"+id+"/updates", body, testToken)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("POST incident update without message: want 400, got %d", rr.Code)
+	}
+}
+
 func TestRoutingIntegration(t *testing.T) {
 	router, s := newTestRouter(t)
 	ctx := context.Background()

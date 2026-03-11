@@ -1,10 +1,8 @@
 package api
 
 import (
-	"fmt"
-	"net"
 	"net/http"
-	"net/url"
+	"regexp"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/pagefire/pagefire/internal/store"
@@ -203,6 +201,16 @@ func (h *ServiceHandler) createRoutingRule(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "condition_value is required")
 		return
 	}
+	if len(rule.ConditionValue) > 1024 {
+		writeError(w, http.StatusBadRequest, "condition_value must be 1024 characters or fewer")
+		return
+	}
+	if rule.ConditionMatchType == "regex" {
+		if _, err := regexp.Compile(rule.ConditionValue); err != nil {
+			writeError(w, http.StatusBadRequest, "condition_value is not a valid regex pattern")
+			return
+		}
+	}
 	if rule.EscalationPolicyID == "" {
 		writeError(w, http.StatusBadRequest, "escalation_policy_id is required")
 		return
@@ -222,50 +230,3 @@ func (h *ServiceHandler) deleteRoutingRule(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// validateWebhookURL validates a webhook URL for safety (SSRF protection).
-func validateWebhookURL(rawURL string) error {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("invalid URL")
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("URL must use http or https scheme")
-	}
-	if u.Hostname() == "" {
-		return fmt.Errorf("URL must have a hostname")
-	}
-
-	// Resolve hostname and check for private IPs
-	ips, err := net.LookupIP(u.Hostname())
-	if err != nil {
-		return fmt.Errorf("cannot resolve hostname")
-	}
-	for _, ip := range ips {
-		if isBlockedIP(ip) {
-			return fmt.Errorf("webhook URL must not point to private/internal addresses")
-		}
-	}
-	return nil
-}
-
-// isBlockedIP checks if an IP is in a private/reserved range (SSRF protection).
-func isBlockedIP(ip net.IP) bool {
-	blockedCIDRs := []string{
-		"127.0.0.0/8",
-		"10.0.0.0/8",
-		"172.16.0.0/12",
-		"192.168.0.0/16",
-		"169.254.0.0/16",
-		"0.0.0.0/8",
-		"::1/128",
-		"fc00::/7",
-		"fe80::/10",
-	}
-	for _, cidr := range blockedCIDRs {
-		_, network, _ := net.ParseCIDR(cidr)
-		if network.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
