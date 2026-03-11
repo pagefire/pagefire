@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pagefire/pagefire/internal/auth"
 	"github.com/pagefire/pagefire/internal/notification"
 	"github.com/pagefire/pagefire/internal/oncall"
 	"github.com/pagefire/pagefire/internal/store"
@@ -31,7 +32,8 @@ func newTestRouter(t *testing.T) (http.Handler, *sqlite.SQLiteStore) {
 
 	resolver := oncall.NewResolver(s.Schedules(), s.Users())
 	dispatcher := notification.NewDispatcher()
-	router := NewRouter(s, resolver, dispatcher, testToken)
+	authSvc := auth.NewService(s.Users(), s.DB())
+	router := NewRouter(s, resolver, dispatcher, authSvc, testToken)
 	return router, s
 }
 
@@ -105,8 +107,9 @@ func TestAuthCorrectToken(t *testing.T) {
 func TestCreateUser(t *testing.T) {
 	router, _ := newTestRouter(t)
 	body := map[string]string{
-		"name":  "Alice",
-		"email": "alice@example.com",
+		"name":     "Alice",
+		"email":    "alice@example.com",
+		"password": "TestPass123!",
 	}
 	rr := doRequest(t, router, http.MethodPost, "/api/v1/users", body, testToken)
 	if rr.Code != http.StatusCreated {
@@ -153,8 +156,9 @@ func TestGetUser(t *testing.T) {
 
 	// Create a user first.
 	createBody := map[string]string{
-		"name":  "Bob",
-		"email": "bob@example.com",
+		"name":     "Bob",
+		"email":    "bob@example.com",
+		"password": "TestPass123!",
 	}
 	createRR := doRequest(t, router, http.MethodPost, "/api/v1/users", createBody, testToken)
 	if createRR.Code != http.StatusCreated {
@@ -195,8 +199,9 @@ func TestUpdateUser(t *testing.T) {
 
 	// Create a user first.
 	createBody := map[string]string{
-		"name":  "Charlie",
-		"email": "charlie@example.com",
+		"name":     "Charlie",
+		"email":    "charlie@example.com",
+		"password": "TestPass123!",
 	}
 	createRR := doRequest(t, router, http.MethodPost, "/api/v1/users", createBody, testToken)
 	if createRR.Code != http.StatusCreated {
@@ -219,11 +224,12 @@ func TestUpdateUser(t *testing.T) {
 func TestCreateUserRoleEnforced(t *testing.T) {
 	router, _ := newTestRouter(t)
 
-	// Try to create a user with role=admin; server should force role=user.
+	// Admin caller (legacy token = admin) can create admin users.
 	body := map[string]string{
-		"name":  "Mallory",
-		"email": "mallory@example.com",
-		"role":  "admin",
+		"name":     "Mallory",
+		"email":    "mallory@example.com",
+		"role":     "admin",
+		"password": "TestPass123!",
 	}
 	rr := doRequest(t, router, http.MethodPost, "/api/v1/users", body, testToken)
 	if rr.Code != http.StatusCreated {
@@ -231,8 +237,8 @@ func TestCreateUserRoleEnforced(t *testing.T) {
 	}
 	var user map[string]any
 	decodeBody(t, rr, &user)
-	if user["role"] != "user" {
-		t.Fatalf("POST /api/v1/users with role=admin: server should enforce role=user, got %q", user["role"])
+	if user["role"] != "admin" {
+		t.Fatalf("POST /api/v1/users with role=admin by admin caller: want role=admin, got %q", user["role"])
 	}
 }
 
@@ -567,7 +573,7 @@ func createTestTeam(t *testing.T, router http.Handler) string {
 
 func createTestUser(t *testing.T, router http.Handler) string {
 	t.Helper()
-	body := map[string]string{"name": "User-" + t.Name(), "email": t.Name() + "@example.com"}
+	body := map[string]string{"name": "User-" + t.Name(), "email": t.Name() + "@example.com", "password": "TestPass123!"}
 	rr := doRequest(t, router, http.MethodPost, "/api/v1/users", body, testToken)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("setup: create user got %d; body: %s", rr.Code, rr.Body.String())

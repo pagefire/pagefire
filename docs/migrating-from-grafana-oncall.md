@@ -16,7 +16,7 @@ This guide maps OnCall concepts to PageFire equivalents and walks you through re
 | Schedule | Schedule | Named on-call schedule with timezone |
 | On-Call Shift | Rotation | Daily, weekly, or custom-hour rotations |
 | Override | Schedule Override | Temporary user swap for a time window |
-| Shift Swap | — | Self-service swaps are on the roadmap; use overrides for now |
+| Shift Swap | Schedule Override | Any user can create overrides to swap shifts (no admin needed) |
 | Personal Notification Rules | Notification Rules | Per-user delay + contact method |
 | Contact Point (Slack, Email, etc.) | Contact Method | Email, webhook, Slack DM |
 | Resolution Note | Alert Log | Audit trail entries on alerts |
@@ -44,32 +44,35 @@ cd pagefire
 make build
 
 # Option C: Docker
-docker run -d -p 3000:3000 \
-  -e PAGEFIRE_ADMIN_TOKEN=change-me-to-something-secret \
-  ghcr.io/pagefire/pagefire:latest
+docker run -d -p 3000:3000 ghcr.io/pagefire/pagefire:latest
 ```
 
-Pick an admin token — this is your API password for all requests. It can be any string you choose:
+Start the server:
 
 ```bash
-export PAGEFIRE_ADMIN_TOKEN="change-me-to-something-secret"
 pagefire serve
 ```
 
 PageFire uses SQLite by default. Your database is created automatically at `./pagefire.db`.
 
-For the rest of this guide, we'll use these variables:
+Open **http://localhost:3000** in your browser. On first run, you'll see a setup wizard to create your admin account (name, email, password).
+
+For the API examples below, generate a per-user API token from **Profile & Settings > API Tokens** in the web UI:
 
 ```bash
-TOKEN="$PAGEFIRE_ADMIN_TOKEN"
+TOKEN="pf_your-api-token"
 API="http://localhost:3000/api/v1"
 ```
 
+> **Note:** You can also set `PAGEFIRE_ADMIN_TOKEN` as an environment variable for a legacy shared token. The examples below work with either method.
+
 ## Step 2: Create Users
 
-In OnCall, users come from Grafana's user system. In PageFire, you create them via the API.
+In OnCall, users come from Grafana's user system. In PageFire, you create users through the web UI or API. Admins create users with name, email, and role — the system generates a one-time invite link so each user sets their own password.
 
-For each team member who was in your OnCall rotation:
+**Via web UI:** Go to **Users** and click **Add User**. You'll get an invite link to share with the new team member.
+
+**Via API:**
 
 ```bash
 curl -s -X POST "$API/users" \
@@ -81,6 +84,8 @@ curl -s -X POST "$API/users" \
     "timezone": "America/Los_Angeles"
   }'
 ```
+
+The response includes an `invite_url`. Share this with the user — they'll open it in their browser to set their password and activate their account.
 
 Save the `id` from the response — you'll need it in the next steps.
 
@@ -229,7 +234,7 @@ curl -s -X POST "$API/escalation-policies/$EP_ID/steps/$STEP1_ID/targets" \
 |---|---|
 | Rotation layer | Rotation (daily/weekly/custom) |
 | Override | Schedule Override (`POST /schedules/{id}/overrides`) |
-| Shift swap | Use overrides; self-service swaps on the roadmap |
+| Shift swap | Schedule Override (all users can create overrides from the UI) |
 | ICS/iCal export | On the roadmap |
 | Schedule quality report | On the roadmap |
 
@@ -332,22 +337,22 @@ curl -s "$API/alerts" \
 ### Things that work differently
 - **No Grafana dependency:** PageFire is standalone. No Grafana plugin needed.
 - **No Celery/Redis/Postgres:** Single binary, SQLite. Nothing else to manage.
-- **API-first:** No UI yet (on the roadmap). Everything is done via REST API.
-- **Single admin token:** Instead of Grafana's user system, you set one API token via `PAGEFIRE_ADMIN_TOKEN` and include it in all requests. Per-user API tokens are on the roadmap.
+- **Built-in web UI:** Full dashboard for managing alerts, services, schedules, teams, and users.
+- **Per-user auth:** Email/password login with session cookies. Per-user API tokens (prefixed `pf_`) for scripts. Admin and member roles with RBAC enforcement.
+- **User invite flow:** Admins create users and share an invite link. Users set their own passwords — admins never handle credentials.
 
 ### Features on the roadmap
-- Self-service shift swaps
-- Team-based access control (authorization layer)
 - Event-driven outgoing webhooks
 - Alert template customization
-- Frontend UI
 - ICS/iCal schedule export
+- Uptime monitoring (HTTP/TCP/ping health checks)
+- Public status pages
 
 ## Configuration Reference
 
 | Variable | Default | Description |
 |---|---|---|
-| `PAGEFIRE_ADMIN_TOKEN` | *(required)* | API token — include as `Authorization: Bearer <value>` in all requests |
+| `PAGEFIRE_ADMIN_TOKEN` | — | Optional legacy API token for backwards compatibility |
 | `PAGEFIRE_PORT` | `3000` | HTTP listen port |
 | `PAGEFIRE_DATABASE_URL` | `./pagefire.db` | SQLite database path |
 | `PAGEFIRE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |

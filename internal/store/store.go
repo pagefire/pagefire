@@ -55,6 +55,9 @@ type UserStore interface {
 	List(ctx context.Context) ([]User, error)
 	Update(ctx context.Context, u *User) error
 	Delete(ctx context.Context, id string) error
+	SetPassword(ctx context.Context, id string, passwordHash string) error
+	SetLastLogin(ctx context.Context, id string) error
+	CountUsers(ctx context.Context) (int, error)
 
 	CreateContactMethod(ctx context.Context, cm *ContactMethod) error
 	ListContactMethods(ctx context.Context, userID string) ([]ContactMethod, error)
@@ -63,6 +66,18 @@ type UserStore interface {
 	CreateNotificationRule(ctx context.Context, nr *NotificationRule) error
 	ListNotificationRules(ctx context.Context, userID string) ([]NotificationRule, error)
 	DeleteNotificationRule(ctx context.Context, id string) error
+
+	// Invite tokens
+	CreateInviteToken(ctx context.Context, t *InviteToken) error
+	GetInviteTokenByHash(ctx context.Context, tokenHash string) (*InviteToken, error)
+	UseInviteToken(ctx context.Context, id string) error
+
+	// API tokens
+	CreateAPIToken(ctx context.Context, t *APIToken, tokenHash string) error
+	ListAPITokens(ctx context.Context, userID string) ([]APIToken, error)
+	GetAPITokenByHash(ctx context.Context, tokenHash string) (*APIToken, error)
+	RevokeAPIToken(ctx context.Context, id string) error
+	TouchAPIToken(ctx context.Context, id string) error
 }
 
 // ServiceStore manages services and integration keys.

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pagefire/pagefire/internal/auth"
 	"github.com/pagefire/pagefire/internal/store"
 )
 
@@ -21,46 +22,96 @@ func UserFromContext(ctx context.Context) *store.User {
 	return u
 }
 
-// APITokenAuth middleware validates Bearer tokens against stored API tokens.
-// For v0.1: uses a single admin token from config. Will be replaced with
-// per-user API tokens stored in the database.
-func APITokenAuth(adminToken string) func(http.Handler) http.Handler {
+// SessionOrTokenAuth middleware authenticates requests via:
+//  1. Session cookie (for browser UI)
+//  2. Bearer token — first checks per-user API tokens, then legacy admin token
+//
+// This replaces the old APITokenAuth and supports both interactive and programmatic access.
+func SessionOrTokenAuth(authSvc *auth.Service, adminToken string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Reject all requests if no admin token is configured
-			if adminToken == "" {
-				writeError(w, http.StatusUnauthorized, "authentication not configured")
+			// 1. Try session cookie
+			if user := authSvc.CurrentUser(r.Context()); user != nil {
+				ctx := context.WithValue(r.Context(), userContextKey, user)
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 
-			auth := r.Header.Get("Authorization")
-			if auth == "" {
-				writeError(w, http.StatusUnauthorized, "authentication required")
-				return
-			}
+			// 2. Try Bearer token
+			authHeader := r.Header.Get("Authorization")
+			if authHeader != "" {
+				token := strings.TrimPrefix(authHeader, "Bearer ")
+				if token == authHeader {
+					writeError(w, http.StatusUnauthorized, "invalid authorization format, use Bearer token")
+					return
+				}
 
-			token := strings.TrimPrefix(auth, "Bearer ")
-			if token == auth {
-				writeError(w, http.StatusUnauthorized, "invalid authorization format, use Bearer token")
-				return
-			}
+				// 2a. Try per-user API token (pf_ prefix)
+				if strings.HasPrefix(token, "pf_") {
+					user, _, err := authSvc.ValidateAPIToken(r.Context(), token)
+					if err != nil {
+						writeError(w, http.StatusUnauthorized, "invalid token")
+						return
+					}
+					ctx := context.WithValue(r.Context(), userContextKey, user)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
 
-			// Constant-time comparison to prevent timing attacks
-			if subtle.ConstantTimeCompare([]byte(token), []byte(adminToken)) != 1 {
+				// 2b. Legacy admin token fallback
+				if adminToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(adminToken)) == 1 {
+					adminUser := &store.User{
+						ID:   "admin",
+						Name: "Admin",
+						Role: store.RoleAdmin,
+					}
+					ctx := context.WithValue(r.Context(), userContextKey, adminUser)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+
 				writeError(w, http.StatusUnauthorized, "invalid token")
 				return
 			}
 
-			// For v0.1 with single admin token, inject a synthetic admin user
-			adminUser := &store.User{
-				ID:   "admin",
-				Name: "Admin",
-				Role: "admin",
-			}
-			ctx := context.WithValue(r.Context(), userContextKey, adminUser)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			writeError(w, http.StatusUnauthorized, "authentication required")
 		})
 	}
+}
+
+// RequireRole middleware ensures the authenticated user has one of the given roles.
+func RequireRole(roles ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user := UserFromContext(r.Context())
+			if user == nil {
+				writeError(w, http.StatusUnauthorized, "authentication required")
+				return
+			}
+			for _, role := range roles {
+				if user.Role == role {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			writeError(w, http.StatusForbidden, "insufficient permissions")
+		})
+	}
+}
+
+// RequireAdminForWrites allows GET/HEAD for any authenticated user but
+// requires admin role for all other HTTP methods (POST, PUT, DELETE, etc.).
+func RequireAdminForWrites(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			user := UserFromContext(r.Context())
+			if user == nil || user.Role != store.RoleAdmin {
+				writeError(w, http.StatusForbidden, "admin access required")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // SecurityHeaders adds standard security response headers.
@@ -98,7 +149,6 @@ func NewRateLimiter(limit int, window time.Duration) *RateLimiter {
 			rl.mu.Lock()
 			cutoff := time.Now().Add(-rl.window)
 			for key, entries := range rl.requests {
-				// Remove keys with no recent requests.
 				hasRecent := false
 				for _, t := range entries {
 					if t.After(cutoff) {
@@ -124,7 +174,6 @@ func (rl *RateLimiter) Allow(key string) bool {
 	now := time.Now()
 	cutoff := now.Add(-rl.window)
 
-	// Prune old entries
 	entries := rl.requests[key]
 	valid := entries[:0]
 	for _, t := range entries {

@@ -102,6 +102,27 @@ func (s *mockUserStore) ListNotificationRules(context.Context, string) ([]store.
 func (s *mockUserStore) DeleteNotificationRule(context.Context, string) error {
 	panic("not implemented")
 }
+func (s *mockUserStore) SetPassword(context.Context, string, string) error { panic("not implemented") }
+func (s *mockUserStore) SetLastLogin(context.Context, string) error       { panic("not implemented") }
+func (s *mockUserStore) CountUsers(context.Context) (int, error)          { panic("not implemented") }
+func (s *mockUserStore) CreateAPIToken(context.Context, *store.APIToken, string) error {
+	panic("not implemented")
+}
+func (s *mockUserStore) ListAPITokens(context.Context, string) ([]store.APIToken, error) {
+	panic("not implemented")
+}
+func (s *mockUserStore) GetAPITokenByHash(context.Context, string) (*store.APIToken, error) {
+	panic("not implemented")
+}
+func (s *mockUserStore) RevokeAPIToken(context.Context, string) error { panic("not implemented") }
+func (s *mockUserStore) TouchAPIToken(context.Context, string) error  { panic("not implemented") }
+func (s *mockUserStore) CreateInviteToken(context.Context, *store.InviteToken) error {
+	panic("not implemented")
+}
+func (s *mockUserStore) GetInviteTokenByHash(context.Context, string) (*store.InviteToken, error) {
+	panic("not implemented")
+}
+func (s *mockUserStore) UseInviteToken(context.Context, string) error { panic("not implemented") }
 
 // ---------------------------------------------------------------------------
 // Helpers

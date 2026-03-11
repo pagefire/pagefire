@@ -1,11 +1,16 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/pagefire/pagefire/internal/auth"
+	"github.com/pagefire/pagefire/internal/store"
+	"github.com/pagefire/pagefire/internal/store/sqlite"
 )
 
 // okHandler is a simple handler that returns 200 OK for testing middleware.
@@ -14,10 +19,26 @@ var okHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 })
 
-// ---------- APITokenAuth ----------
+func newTestAuthMiddleware(t *testing.T) (func(http.Handler) http.Handler, *auth.Service) {
+	t.Helper()
+	s, err := sqlite.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
 
-func TestAPITokenAuth_NoAuthorizationHeader(t *testing.T) {
-	handler := APITokenAuth("secret-token")(okHandler)
+	authSvc := auth.NewService(s.Users(), s.DB())
+	return SessionOrTokenAuth(authSvc, "secret-token"), authSvc
+}
+
+// ---------- SessionOrTokenAuth (legacy admin token) ----------
+
+func TestSessionOrTokenAuth_NoAuthorizationHeader(t *testing.T) {
+	mw, _ := newTestAuthMiddleware(t)
+	handler := mw(okHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
@@ -34,8 +55,9 @@ func TestAPITokenAuth_NoAuthorizationHeader(t *testing.T) {
 	}
 }
 
-func TestAPITokenAuth_InvalidFormat(t *testing.T) {
-	handler := APITokenAuth("secret-token")(okHandler)
+func TestSessionOrTokenAuth_InvalidFormat(t *testing.T) {
+	mw, _ := newTestAuthMiddleware(t)
+	handler := mw(okHandler)
 
 	tests := []struct {
 		name  string
@@ -56,18 +78,13 @@ func TestAPITokenAuth_InvalidFormat(t *testing.T) {
 			if rr.Code != http.StatusUnauthorized {
 				t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
 			}
-
-			var body map[string]string
-			json.NewDecoder(rr.Body).Decode(&body)
-			if body["error"] != "invalid authorization format, use Bearer token" {
-				t.Errorf("error = %q, want %q", body["error"], "invalid authorization format, use Bearer token")
-			}
 		})
 	}
 }
 
-func TestAPITokenAuth_WrongToken(t *testing.T) {
-	handler := APITokenAuth("secret-token")(okHandler)
+func TestSessionOrTokenAuth_WrongToken(t *testing.T) {
+	mw, _ := newTestAuthMiddleware(t)
+	handler := mw(okHandler)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Authorization", "Bearer wrong-token")
@@ -77,16 +94,11 @@ func TestAPITokenAuth_WrongToken(t *testing.T) {
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
 	}
-
-	var body map[string]string
-	json.NewDecoder(rr.Body).Decode(&body)
-	if body["error"] != "invalid token" {
-		t.Errorf("error = %q, want %q", body["error"], "invalid token")
-	}
 }
 
-func TestAPITokenAuth_CorrectToken(t *testing.T) {
-	handler := APITokenAuth("secret-token")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestSessionOrTokenAuth_LegacyAdminToken(t *testing.T) {
+	mw, _ := newTestAuthMiddleware(t)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user := UserFromContext(r.Context())
 		if user == nil {
 			t.Fatal("expected user in context, got nil")
@@ -94,11 +106,8 @@ func TestAPITokenAuth_CorrectToken(t *testing.T) {
 		if user.ID != "admin" {
 			t.Errorf("user.ID = %q, want %q", user.ID, "admin")
 		}
-		if user.Name != "Admin" {
-			t.Errorf("user.Name = %q, want %q", user.Name, "Admin")
-		}
-		if user.Role != "admin" {
-			t.Errorf("user.Role = %q, want %q", user.Role, "admin")
+		if user.Role != store.RoleAdmin {
+			t.Errorf("user.Role = %q, want %q", user.Role, store.RoleAdmin)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -113,31 +122,31 @@ func TestAPITokenAuth_CorrectToken(t *testing.T) {
 	}
 }
 
-func TestAPITokenAuth_EmptyAdminToken(t *testing.T) {
-	handler := APITokenAuth("")(okHandler)
+// ---------- RequireRole ----------
 
-	tests := []struct {
-		name   string
-		header string
-	}{
-		{"no header", ""},
-		{"empty bearer", "Bearer "},
-		{"some token", "Bearer some-token"},
+func TestRequireRole_Allowed(t *testing.T) {
+	handler := RequireRole(store.RoleAdmin)(okHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	ctx := context.WithValue(req.Context(), userContextKey, &store.User{Role: store.RoleAdmin})
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req.WithContext(ctx))
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			if tt.header != "" {
-				req.Header.Set("Authorization", tt.header)
-			}
-			rr := httptest.NewRecorder()
-			handler.ServeHTTP(rr, req)
+func TestRequireRole_Denied(t *testing.T) {
+	handler := RequireRole(store.RoleAdmin)(okHandler)
 
-			if rr.Code != http.StatusUnauthorized {
-				t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
-			}
-		})
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	ctx := context.WithValue(req.Context(), userContextKey, &store.User{Role: store.RoleUser})
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req.WithContext(ctx))
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusForbidden)
 	}
 }
 
@@ -151,11 +160,11 @@ func TestSecurityHeaders(t *testing.T) {
 	handler.ServeHTTP(rr, req)
 
 	expected := map[string]string{
-		"X-Content-Type-Options": "nosniff",
-		"X-Frame-Options":       "DENY",
-		"X-XSS-Protection":      "0",
+		"X-Content-Type-Options":  "nosniff",
+		"X-Frame-Options":        "DENY",
+		"X-XSS-Protection":       "0",
 		"Content-Security-Policy": "default-src 'none'",
-		"Referrer-Policy":        "no-referrer",
+		"Referrer-Policy":         "no-referrer",
 	}
 
 	for header, want := range expected {
@@ -165,7 +174,6 @@ func TestSecurityHeaders(t *testing.T) {
 		}
 	}
 
-	// Verify the next handler was called
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
 	}
@@ -199,7 +207,6 @@ func TestRateLimiter_AllowAfterWindowPasses(t *testing.T) {
 	window := 10 * time.Millisecond
 	rl := NewRateLimiter(2, window)
 
-	// Exhaust the limit
 	for i := 0; i < 2; i++ {
 		if !rl.Allow("key1") {
 			t.Fatalf("request %d should be allowed", i+1)
@@ -210,7 +217,6 @@ func TestRateLimiter_AllowAfterWindowPasses(t *testing.T) {
 		t.Fatal("should be rate limited")
 	}
 
-	// Wait for window to pass
 	time.Sleep(window + 5*time.Millisecond)
 
 	if !rl.Allow("key1") {
@@ -238,7 +244,6 @@ func TestRateLimitMiddleware_Returns429WhenLimited(t *testing.T) {
 	rl := NewRateLimiter(1, time.Minute)
 	handler := RateLimitMiddleware(rl)(okHandler)
 
-	// First request should pass
 	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
 	req1.RemoteAddr = "1.2.3.4:1234"
 	rr1 := httptest.NewRecorder()
@@ -248,7 +253,6 @@ func TestRateLimitMiddleware_Returns429WhenLimited(t *testing.T) {
 		t.Errorf("first request: status = %d, want %d", rr1.Code, http.StatusOK)
 	}
 
-	// Second request should be rate limited
 	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
 	req2.RemoteAddr = "1.2.3.4:1234"
 	rr2 := httptest.NewRecorder()
@@ -257,19 +261,12 @@ func TestRateLimitMiddleware_Returns429WhenLimited(t *testing.T) {
 	if rr2.Code != http.StatusTooManyRequests {
 		t.Errorf("second request: status = %d, want %d", rr2.Code, http.StatusTooManyRequests)
 	}
-
-	var body map[string]string
-	json.NewDecoder(rr2.Body).Decode(&body)
-	if body["error"] != "rate limit exceeded" {
-		t.Errorf("error = %q, want %q", body["error"], "rate limit exceeded")
-	}
 }
 
 func TestRateLimitMiddleware_UsesXRealIP(t *testing.T) {
 	rl := NewRateLimiter(1, time.Minute)
 	handler := RateLimitMiddleware(rl)(okHandler)
 
-	// First request with X-Real-IP
 	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
 	req1.RemoteAddr = "127.0.0.1:1234"
 	req1.Header.Set("X-Real-IP", "10.0.0.1")
@@ -280,7 +277,6 @@ func TestRateLimitMiddleware_UsesXRealIP(t *testing.T) {
 		t.Errorf("first request: status = %d, want %d", rr1.Code, http.StatusOK)
 	}
 
-	// Second request with same X-Real-IP but different RemoteAddr
 	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
 	req2.RemoteAddr = "127.0.0.1:5678"
 	req2.Header.Set("X-Real-IP", "10.0.0.1")

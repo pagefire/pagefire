@@ -31,10 +31,22 @@ func (h *ScheduleHandler) Routes() chi.Router {
 	r.Post("/{id}/rotations/{rotID}/participants", h.createParticipant)
 	r.Delete("/{id}/rotations/{rotID}/participants/{partID}", h.deleteParticipant)
 
+	// Overrides are also available here for admin callers.
 	r.Get("/{id}/overrides", h.listOverrides)
 	r.Post("/{id}/overrides", h.createOverride)
 	r.Delete("/{id}/overrides/{overrideID}", h.deleteOverride)
 
+	return r
+}
+
+// OverrideRoutes returns routes for schedule overrides accessible to all
+// authenticated users (not just admins). On-call operators need to create
+// swaps without admin privileges.
+func (h *ScheduleHandler) OverrideRoutes() chi.Router {
+	r := chi.NewRouter()
+	r.Get("/{id}/overrides", h.listOverrides)
+	r.Post("/{id}/overrides", h.createOverride)
+	r.Delete("/{id}/overrides/{overrideID}", h.deleteOverride)
 	return r
 }
 

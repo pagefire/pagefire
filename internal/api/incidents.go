@@ -106,6 +106,19 @@ func (h *IncidentHandler) createUpdate(w http.ResponseWriter, r *http.Request) {
 		handleStoreError(w, err)
 		return
 	}
+
+	// Sync the incident's status to match the latest timeline update
+	inc, err := h.incidents.Get(r.Context(), u.IncidentID)
+	if err != nil {
+		handleStoreError(w, err)
+		return
+	}
+	inc.Status = u.Status
+	if err := h.incidents.Update(r.Context(), inc); err != nil {
+		handleStoreError(w, err)
+		return
+	}
+
 	writeJSON(w, http.StatusCreated, u)
 }
 

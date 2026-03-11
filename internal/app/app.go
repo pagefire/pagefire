@@ -10,13 +10,17 @@ import (
 	"syscall"
 	"time"
 
+	"io/fs"
+
 	"github.com/pagefire/pagefire/internal/api"
+	"github.com/pagefire/pagefire/internal/auth"
 	"github.com/pagefire/pagefire/internal/engine"
 	"github.com/pagefire/pagefire/internal/notification"
 	"github.com/pagefire/pagefire/internal/notification/providers"
 	"github.com/pagefire/pagefire/internal/oncall"
 	"github.com/pagefire/pagefire/internal/store"
 	"github.com/pagefire/pagefire/internal/store/sqlite"
+	"github.com/pagefire/pagefire/web"
 )
 
 // App holds all application dependencies and manages lifecycle.
@@ -44,10 +48,12 @@ func New(cfg *Config) (*App, error) {
 
 	// Open store
 	var s store.Store
+	var sqliteStore *sqlite.SQLiteStore
 	var err error
 	switch cfg.DatabaseDriver {
 	case "sqlite":
-		s, err = sqlite.New(cfg.DatabaseURL)
+		sqliteStore, err = sqlite.New(cfg.DatabaseURL)
+		s = sqliteStore
 	case "postgres":
 		return nil, fmt.Errorf("postgres support not yet implemented")
 	default:
@@ -61,6 +67,9 @@ func New(cfg *Config) (*App, error) {
 	if err := s.Migrate(context.Background()); err != nil {
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
+
+	// Auth service
+	authSvc := auth.NewService(s.Users(), sqliteStore.DB())
 
 	// Notification dispatcher
 	dispatcher := notification.NewDispatcher()
@@ -83,8 +92,14 @@ func New(cfg *Config) (*App, error) {
 		engine.NewCleanupProcessor(s),
 	)
 
+	// Embedded frontend assets
+	frontendAssets, err := fs.Sub(web.Assets, "dist")
+	if err != nil {
+		return nil, fmt.Errorf("loading frontend assets: %w", err)
+	}
+
 	// HTTP server
-	router := api.NewRouter(s, resolver, dispatcher, cfg.AdminToken)
+	router := api.NewRouter(s, resolver, dispatcher, authSvc, cfg.AdminToken, frontendAssets)
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
 		Handler:      router,

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/pagefire/pagefire/internal/api"
+	"github.com/pagefire/pagefire/internal/auth"
 	"github.com/pagefire/pagefire/internal/notification"
 	"github.com/pagefire/pagefire/internal/oncall"
 	"github.com/pagefire/pagefire/internal/store/sqlite"
@@ -36,7 +37,8 @@ func TestSmoke_FullAlertFlow(t *testing.T) {
 
 	resolver := oncall.NewResolver(s.Schedules(), s.Users())
 	dispatcher := notification.NewDispatcher()
-	router := api.NewRouter(s, resolver, dispatcher, smokeToken)
+	authSvc := auth.NewService(s.Users(), s.DB())
+	router := api.NewRouter(s, resolver, dispatcher, authSvc, smokeToken)
 
 	// Helper to make requests and decode JSON.
 	do := func(method, path string, body any, token string) (int, map[string]any) {
@@ -70,7 +72,7 @@ func TestSmoke_FullAlertFlow(t *testing.T) {
 
 	// 2. Create user
 	code, body = do("POST", "/api/v1/users", map[string]string{
-		"name": "Alice", "email": "alice@example.com", "timezone": "UTC",
+		"name": "Alice", "email": "alice@example.com", "timezone": "UTC", "password": "TestPass123!",
 	}, smokeToken)
 	if code != 201 {
 		t.Fatalf("create user: want 201, got %d — %v", code, body)
@@ -209,7 +211,8 @@ func TestSmoke_RoutingAndGrouping(t *testing.T) {
 
 	resolver := oncall.NewResolver(s.Schedules(), s.Users())
 	dispatcher := notification.NewDispatcher()
-	router := api.NewRouter(s, resolver, dispatcher, smokeToken)
+	authSvc := auth.NewService(s.Users(), s.DB())
+	router := api.NewRouter(s, resolver, dispatcher, authSvc, smokeToken)
 
 	do := func(method, path string, body any, token string) (int, map[string]any) {
 		t.Helper()
@@ -350,4 +353,223 @@ func TestSmoke_RoutingAndGrouping(t *testing.T) {
 	}
 
 	t.Log("smoke test passed: routing rules and alert grouping work end-to-end")
+}
+
+// TestSmoke_AuthFlow exercises the full auth lifecycle:
+// setup (first admin) → login → create user (invite) → invite accept → API token → use token.
+func TestSmoke_AuthFlow(t *testing.T) {
+	ctx := context.Background()
+
+	s, err := sqlite.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	resolver := oncall.NewResolver(s.Schedules(), s.Users())
+	dispatcher := notification.NewDispatcher()
+	authSvc := auth.NewService(s.Users(), s.DB())
+	router := api.NewRouter(s, resolver, dispatcher, authSvc, "") // no legacy token
+
+	// cookieJar stores cookies between requests to simulate a browser session.
+	var cookies []*http.Cookie
+
+	doWithCookies := func(method, path string, body any) (int, map[string]any) {
+		t.Helper()
+		var req *http.Request
+		if body != nil {
+			b, _ := json.Marshal(body)
+			req = httptest.NewRequest(method, path, bytes.NewReader(b))
+			req.Header.Set("Content-Type", "application/json")
+		} else {
+			req = httptest.NewRequest(method, path, nil)
+		}
+		for _, c := range cookies {
+			req.AddCookie(c)
+		}
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+
+		// Collect Set-Cookie headers
+		if setCookies := rr.Result().Cookies(); len(setCookies) > 0 {
+			cookies = setCookies
+		}
+
+		var result map[string]any
+		_ = json.NewDecoder(rr.Body).Decode(&result)
+		return rr.Code, result
+	}
+
+	doWithToken := func(method, path string, body any, token string) (int, map[string]any) {
+		t.Helper()
+		var req *http.Request
+		if body != nil {
+			b, _ := json.Marshal(body)
+			req = httptest.NewRequest(method, path, bytes.NewReader(b))
+			req.Header.Set("Content-Type", "application/json")
+		} else {
+			req = httptest.NewRequest(method, path, nil)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		router.ServeHTTP(rr, req)
+		var result map[string]any
+		_ = json.NewDecoder(rr.Body).Decode(&result)
+		return rr.Code, result
+	}
+
+	// 1. Setup check — should require setup
+	code, body := doWithCookies("GET", "/api/v1/auth/setup", nil)
+	if code != 200 {
+		t.Fatalf("setup check: want 200, got %d", code)
+	}
+	if body["setup_required"] != true {
+		t.Fatalf("setup_required: want true, got %v", body["setup_required"])
+	}
+
+	// 2. Create first admin via setup
+	code, body = doWithCookies("POST", "/api/v1/auth/setup", map[string]string{
+		"name": "Admin", "email": "admin@test.com", "password": "AdminPass123!",
+	})
+	if code != 201 {
+		t.Fatalf("setup: want 201, got %d — %v", code, body)
+	}
+	if body["role"] != "admin" {
+		t.Fatalf("setup: want role=admin, got %v", body["role"])
+	}
+
+	// 3. Setup again should fail (already done)
+	code, _ = doWithCookies("POST", "/api/v1/auth/setup", map[string]string{
+		"name": "Hacker", "email": "hack@test.com", "password": "HackPass123!",
+	})
+	if code != 409 {
+		t.Fatalf("setup again: want 409, got %d", code)
+	}
+
+	// 4. Login
+	cookies = nil // clear cookies
+	code, body = doWithCookies("POST", "/api/v1/auth/login", map[string]string{
+		"email": "admin@test.com", "password": "AdminPass123!",
+	})
+	if code != 200 {
+		t.Fatalf("login: want 200, got %d — %v", code, body)
+	}
+	if body["name"] != "Admin" {
+		t.Fatalf("login: want name=Admin, got %v", body["name"])
+	}
+
+	// 5. /me should return current user
+	code, body = doWithCookies("GET", "/api/v1/auth/me", nil)
+	if code != 200 {
+		t.Fatalf("me: want 200, got %d — %v", code, body)
+	}
+	if body["email"] != "admin@test.com" {
+		t.Fatalf("me: want email=admin@test.com, got %v", body["email"])
+	}
+
+	// 6. Wrong password should fail
+	code, _ = doWithCookies("POST", "/api/v1/auth/login", map[string]string{
+		"email": "admin@test.com", "password": "WrongPassword",
+	})
+	if code != 401 {
+		t.Fatalf("bad login: want 401, got %d", code)
+	}
+
+	// 7. Create user (generates invite URL)
+	code, body = doWithCookies("POST", "/api/v1/users", map[string]string{
+		"name": "Bob", "email": "bob@test.com",
+	})
+	if code != 201 {
+		t.Fatalf("create user: want 201, got %d — %v", code, body)
+	}
+	inviteURL, ok := body["invite_url"].(string)
+	if !ok || inviteURL == "" {
+		t.Fatalf("create user: expected invite_url, got %v", body)
+	}
+	// Extract token from invite URL (last path segment)
+	parts := strings.Split(inviteURL, "/invite/")
+	if len(parts) != 2 {
+		t.Fatalf("unexpected invite URL format: %s", inviteURL)
+	}
+	inviteToken := parts[1]
+
+	// 8. Validate invite token
+	code, body = doWithCookies("GET", "/api/v1/auth/invite/"+inviteToken, nil)
+	if code != 200 {
+		t.Fatalf("invite check: want 200, got %d — %v", code, body)
+	}
+	if body["name"] != "Bob" {
+		t.Fatalf("invite check: want name=Bob, got %v", body["name"])
+	}
+
+	// 9. Accept invite (set password)
+	code, body = doWithCookies("POST", "/api/v1/auth/invite/"+inviteToken, map[string]string{
+		"password": "BobPass1234!",
+	})
+	if code != 200 {
+		t.Fatalf("invite accept: want 200, got %d — %v", code, body)
+	}
+
+	// 10. Invite token should be used — can't reuse
+	code, _ = doWithCookies("GET", "/api/v1/auth/invite/"+inviteToken, nil)
+	if code != 410 {
+		t.Fatalf("invite reuse check: want 410 (Gone), got %d", code)
+	}
+
+	// 11. Bob can now login
+	cookies = nil
+	code, body = doWithCookies("POST", "/api/v1/auth/login", map[string]string{
+		"email": "bob@test.com", "password": "BobPass1234!",
+	})
+	if code != 200 {
+		t.Fatalf("bob login: want 200, got %d — %v", code, body)
+	}
+
+	// 12. Generate API token
+	code, body = doWithCookies("POST", "/api/v1/auth/tokens", map[string]string{
+		"name": "CI Token",
+	})
+	if code != 201 {
+		t.Fatalf("create token: want 201, got %d — %v", code, body)
+	}
+	apiToken, ok := body["token"].(string)
+	if !ok || !strings.HasPrefix(apiToken, "pf_") {
+		t.Fatalf("create token: expected pf_ prefix, got %v", body["token"])
+	}
+	tokenID := body["id"].(string)
+
+	// 13. Use API token to access alerts
+	code, _ = doWithToken("GET", "/api/v1/alerts", nil, apiToken)
+	if code != 200 {
+		t.Fatalf("alerts with API token: want 200, got %d", code)
+	}
+
+	// 14. List tokens
+	code, body = doWithCookies("GET", "/api/v1/auth/tokens", nil)
+	if code != 200 {
+		t.Fatalf("list tokens: want 200, got %d", code)
+	}
+
+	// 15. Revoke token
+	code, _ = doWithCookies("DELETE", "/api/v1/auth/tokens/"+tokenID, nil)
+	if code != 200 {
+		t.Fatalf("revoke token: want 200, got %d", code)
+	}
+
+	// 16. Revoked token should fail
+	code, _ = doWithToken("GET", "/api/v1/alerts", nil, apiToken)
+	if code != 401 {
+		t.Fatalf("revoked token: want 401, got %d", code)
+	}
+
+	// 17. Logout
+	code, _ = doWithCookies("POST", "/api/v1/auth/logout", nil)
+	if code != 200 {
+		t.Fatalf("logout: want 200, got %d", code)
+	}
+
+	t.Log("smoke test passed: full auth lifecycle (setup → login → invite → API token → revoke → logout)")
 }
