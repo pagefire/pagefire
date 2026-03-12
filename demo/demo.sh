@@ -17,9 +17,9 @@ set -euo pipefail
 PAGEFIRE_PORT=3001
 MYAPP_PORT=8080
 NOTIFY_PORT=9090
-ADMIN_TOKEN="demo-token-123"
 API="http://localhost:${PAGEFIRE_PORT}/api/v1"
 PIDS=()
+COOKIE_JAR="/tmp/pagefire-demo-cookies.txt"
 
 cleanup() {
   echo ""
@@ -30,7 +30,7 @@ cleanup() {
   for port in ${PAGEFIRE_PORT} ${MYAPP_PORT} ${NOTIFY_PORT}; do
     kill $(lsof -ti:${port}) 2>/dev/null || true
   done
-  rm -f /tmp/pagefire-demo.db
+  rm -f /tmp/pagefire-demo.db "${COOKIE_JAR}"
   echo "Done. Logs preserved at /tmp/pagefire-demo.log"
 }
 trap cleanup EXIT
@@ -39,10 +39,8 @@ log()  { echo "[==>] $1"; }
 ok()   { echo " [ok] $1"; }
 fire() { echo "[!!] $1"; }
 
-auth() { echo "Authorization: Bearer ${ADMIN_TOKEN}"; }
-
 # --- Clean stale state -----------------------------------------------------
-rm -f /tmp/pagefire-demo.db /tmp/pagefire-demo.log
+rm -f /tmp/pagefire-demo.db /tmp/pagefire-demo.log "${COOKIE_JAR}"
 for port in ${PAGEFIRE_PORT} ${MYAPP_PORT} ${NOTIFY_PORT}; do
   kill $(lsof -ti:${port}) 2>/dev/null || true
 done
@@ -97,7 +95,6 @@ ok "Notification receiver listening on :${NOTIFY_PORT}"
 
 # --- Start PageFire ---------------------------------------------------------
 log "Starting PageFire on :${PAGEFIRE_PORT}..."
-PAGEFIRE_ADMIN_TOKEN="${ADMIN_TOKEN}" \
 PAGEFIRE_PORT="${PAGEFIRE_PORT}" \
 PAGEFIRE_DATABASE_URL="/tmp/pagefire-demo.db" \
 PAGEFIRE_LOG_LEVEL="info" \
@@ -124,48 +121,58 @@ ok "App is running -- GET http://localhost:${MYAPP_PORT}/health returns 200"
 echo ""
 log "Setting up PageFire..."
 
-USER_ID=$(curl -sf -X POST "${API}/users" \
-  -H "$(auth)" -H "Content-Type: application/json" \
-  -d '{"name":"User A","email":"a@demo.dev","timezone":"UTC"}' \
+# Create admin user via setup endpoint (no auth required for first user)
+USER_ID=$(curl -sf -X POST "${API}/auth/setup" \
+  -c "${COOKIE_JAR}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"User A","email":"a@demo.dev","password":"demo-password-123"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-ok "Created user: User A (${USER_ID})"
+ok "Created admin user: User A (${USER_ID})"
+
+# Generate an API token using the session cookie from setup
+API_TOKEN=$(curl -sf -X POST "${API}/auth/tokens" \
+  -b "${COOKIE_JAR}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"demo-script"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+ok "Generated API token"
 
 CM_ID=$(curl -sf -X POST "${API}/users/${USER_ID}/contact-methods" \
-  -H "$(auth)" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
   -d "{\"type\":\"webhook\",\"value\":\"http://localhost:${NOTIFY_PORT}/notify\"}" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 ok "Created contact method: webhook -> localhost:${NOTIFY_PORT}"
 
 curl -sf -X POST "${API}/users/${USER_ID}/notification-rules" \
-  -H "$(auth)" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
   -d "{\"contact_method_id\":\"${CM_ID}\",\"delay_minutes\":0}" >/dev/null
 ok "Created notification rule: notify immediately"
 
 EP_ID=$(curl -sf -X POST "${API}/escalation-policies" \
-  -H "$(auth)" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
   -d '{"name":"Default Escalation","repeat":2}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 ok "Created escalation policy: Default Escalation (repeat 2x)"
 
 STEP_ID=$(curl -sf -X POST "${API}/escalation-policies/${EP_ID}/steps" \
-  -H "$(auth)" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
   -d '{"step_number":0,"delay_minutes":1}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 ok "Created escalation step: notify after 0 min, re-escalate after 1 min"
 
 curl -sf -X POST "${API}/escalation-policies/${EP_ID}/steps/${STEP_ID}/targets" \
-  -H "$(auth)" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
   -d "{\"target_type\":\"user\",\"target_id\":\"${USER_ID}\"}" >/dev/null
 ok "Added target: User A"
 
 SVC_ID=$(curl -sf -X POST "${API}/services" \
-  -H "$(auth)" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
   -d "{\"name\":\"Demo App\",\"escalation_policy_id\":\"${EP_ID}\"}" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 ok "Created service: Demo App"
 
 IK_SECRET=$(curl -sf -X POST "${API}/services/${SVC_ID}/integration-keys" \
-  -H "$(auth)" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
   -d '{"name":"Health Checker"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['secret'])")
 ok "Created integration key for health checker"
@@ -190,7 +197,7 @@ health_check() {
         ok "App is back! Resolving alert..."
         curl -sf -X POST \
           "http://localhost:${PAGEFIRE_PORT}/api/v1/alerts/${ALERT_ID}/resolve" \
-          -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+          -H "Authorization: Bearer ${API_TOKEN}" \
           -H "Content-Type: application/json" \
           -d "{\"user_id\":\"${USER_ID}\"}" >/dev/null 2>&1 || true
         ok "Alert resolved. No more pages."
@@ -229,7 +236,7 @@ echo ""
 echo "    2. Restart the app: go run demo/myapp.go &"
 echo "       -> Health check passes again"
 echo ""
-echo "    3. Check alerts:  curl -s -H 'Authorization: Bearer ${ADMIN_TOKEN}' \\"
+echo "    3. Check alerts:  curl -s -H 'Authorization: Bearer ${API_TOKEN}' \\"
 echo "                        http://localhost:${PAGEFIRE_PORT}/api/v1/alerts | python3 -m json.tool"
 echo ""
 echo "    4. View logs:     tail -f /tmp/pagefire-demo.log"

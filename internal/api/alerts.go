@@ -48,6 +48,14 @@ func (h *AlertHandler) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "service_id and summary are required")
 		return
 	}
+	if len(req.Summary) > 500 {
+		writeError(w, http.StatusBadRequest, "summary must be 500 characters or fewer")
+		return
+	}
+	if len(req.Details) > 10000 {
+		writeError(w, http.StatusBadRequest, "details must be 10000 characters or fewer")
+		return
+	}
 
 	svc, err := h.services.Get(r.Context(), req.ServiceID)
 	if err != nil {
@@ -104,10 +112,15 @@ func (h *AlertHandler) get(w http.ResponseWriter, r *http.Request) {
 
 func (h *AlertHandler) list(w http.ResponseWriter, r *http.Request) {
 	limit, offset := parseListLimit(r)
+	search := r.URL.Query().Get("search")
+	if len(search) > 200 {
+		search = search[:200]
+	}
 	filter := store.AlertFilter{
 		Status:    r.URL.Query().Get("status"),
 		ServiceID: r.URL.Query().Get("service_id"),
 		GroupKey:  r.URL.Query().Get("group_key"),
+		Search:    search,
 		Limit:     limit,
 		Offset:    offset,
 	}
@@ -124,13 +137,22 @@ func (h *AlertHandler) acknowledge(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID string `json:"user_id"`
 	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	// Body is optional — fall back to session user
+	_ = decodeJSON(w, r, &req)
+
+	userID := req.UserID
+	if userID == "" {
+		if caller := UserFromContext(r.Context()); caller != nil {
+			userID = caller.ID
+		}
+	}
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "user_id is required")
 		return
 	}
 
 	id := chi.URLParam(r, "id")
-	if err := h.alerts.Acknowledge(r.Context(), id, req.UserID); err != nil {
+	if err := h.alerts.Acknowledge(r.Context(), id, userID); err != nil {
 		handleStoreError(w, err)
 		return
 	}
@@ -139,7 +161,7 @@ func (h *AlertHandler) acknowledge(w http.ResponseWriter, r *http.Request) {
 		AlertID: id,
 		Event:   "acknowledged",
 		Message: "Alert acknowledged",
-		UserID:  &req.UserID,
+		UserID:  &userID,
 	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "acknowledged"})

@@ -16,6 +16,14 @@ export function TextInput({ label, error, ...props }) {
   )
 }
 
+export function TextArea({ label, error, ...props }) {
+  return (
+    <FormField label={label} error={error}>
+      <textarea class={`form-control${error ? ' form-control-error' : ''}`} rows={3} {...props} />
+    </FormField>
+  )
+}
+
 export function SelectInput({ label, error, options, placeholder, ...props }) {
   return (
     <FormField label={label} error={error}>

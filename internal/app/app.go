@@ -99,7 +99,7 @@ func New(cfg *Config) (*App, error) {
 	}
 
 	// HTTP server
-	router := api.NewRouter(s, resolver, dispatcher, authSvc, cfg.AdminToken, frontendAssets)
+	router := api.NewRouter(s, resolver, dispatcher, authSvc, frontendAssets)
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
 		Handler:      router,

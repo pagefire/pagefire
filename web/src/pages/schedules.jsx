@@ -4,7 +4,14 @@ import { useAuth } from '../auth.jsx'
 import { apiPost, apiPut, apiDelete } from '../api.js'
 import { EmptyState } from '../components/empty-state.jsx'
 import { Modal } from '../components/modal.jsx'
-import { TextInput } from '../components/form-field.jsx'
+import { TextInput, SelectInput } from '../components/form-field.jsx'
+
+const TIMEZONES = [
+  'UTC', 'America/New_York', 'America/Chicago', 'America/Denver',
+  'America/Los_Angeles', 'America/Sao_Paulo', 'Europe/London',
+  'Europe/Berlin', 'Europe/Moscow', 'Asia/Kolkata', 'Asia/Shanghai',
+  'Asia/Tokyo', 'Australia/Sydney', 'Pacific/Auckland',
+].map(tz => ({ value: tz, label: tz }))
 import { ConfirmDialog } from '../components/confirm-dialog.jsx'
 import { useToast } from '../components/toast.jsx'
 
@@ -117,7 +124,7 @@ export function Schedules() {
 
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={editing ? 'Edit Schedule' : 'Add Schedule'}>
         <TextInput label="Name" value={form.name} onInput={setField('name')} error={errors.name} placeholder="Primary On-Call" />
-        <TextInput label="Timezone" value={form.timezone} onInput={setField('timezone')} placeholder="UTC" />
+        <SelectInput label="Timezone" value={form.timezone} onChange={setField('timezone')} options={TIMEZONES} />
         <TextInput label="Description" value={form.description} onInput={setField('description')} placeholder="Optional description" />
         <div class="form-actions">
           <button class="btn btn-secondary" onClick={() => setModalOpen(false)}>Cancel</button>

@@ -58,6 +58,11 @@ func (s *incidentStore) List(ctx context.Context, filter store.IncidentFilter) (
 		query += ` AND status = ?`
 		args = append(args, filter.Status)
 	}
+	if filter.Search != "" {
+		query += ` AND (title LIKE ? OR summary LIKE ?)`
+		like := "%" + filter.Search + "%"
+		args = append(args, like, like)
+	}
 
 	query += ` ORDER BY created_at DESC`
 
@@ -145,7 +150,11 @@ func (s *incidentStore) CreateUpdate(ctx context.Context, u *store.IncidentUpdat
 
 func (s *incidentStore) ListUpdates(ctx context.Context, incidentID string) ([]store.IncidentUpdate, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, incident_id, status, message, created_by, created_at FROM incident_updates WHERE incident_id = ? ORDER BY created_at`, incidentID,
+		`SELECT iu.id, iu.incident_id, iu.status, iu.message, iu.created_by, u.name, iu.created_at
+		 FROM incident_updates iu
+		 LEFT JOIN users u ON iu.created_by = u.id
+		 WHERE iu.incident_id = ?
+		 ORDER BY iu.created_at`, incidentID,
 	)
 	if err != nil {
 		return nil, err
@@ -155,11 +164,12 @@ func (s *incidentStore) ListUpdates(ctx context.Context, incidentID string) ([]s
 	var updates []store.IncidentUpdate
 	for rows.Next() {
 		var u store.IncidentUpdate
-		var createdBy sql.NullString
-		if err := rows.Scan(&u.ID, &u.IncidentID, &u.Status, &u.Message, &createdBy, &u.CreatedAt); err != nil {
+		var createdBy, createdByName sql.NullString
+		if err := rows.Scan(&u.ID, &u.IncidentID, &u.Status, &u.Message, &createdBy, &createdByName, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		u.CreatedBy = fromNullString(createdBy)
+		u.CreatedByName = fromNullString(createdByName)
 		updates = append(updates, u)
 	}
 	return updates, rows.Err()

@@ -220,10 +220,10 @@ export function ScheduleDetail({ id }) {
       <div class="detail-grid">
         <div class="detail-card">
           <h3>On-Call Now</h3>
-          {oncall && oncall.user_id ? (
+          {oncall && oncall.length > 0 ? (
             <div class="oncall-badge">
               <span class="oncall-dot" />
-              <span>{oncall.user_name || oncall.user_id}</span>
+              <span>{oncall.map(u => u.name).join(', ')}</span>
             </div>
           ) : (
             <p class="text-muted">No one on call</p>

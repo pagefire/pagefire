@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/subtle"
 	"net/http"
 	"strings"
 	"sync"
@@ -24,10 +23,10 @@ func UserFromContext(ctx context.Context) *store.User {
 
 // SessionOrTokenAuth middleware authenticates requests via:
 //  1. Session cookie (for browser UI)
-//  2. Bearer token — first checks per-user API tokens, then legacy admin token
+//  2. Bearer token — per-user API tokens (pf_ prefix)
 //
-// This replaces the old APITokenAuth and supports both interactive and programmatic access.
-func SessionOrTokenAuth(authSvc *auth.Service, adminToken string) func(http.Handler) http.Handler {
+// This supports both interactive and programmatic access.
+func SessionOrTokenAuth(authSvc *auth.Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// 1. Try session cookie
@@ -47,30 +46,13 @@ func SessionOrTokenAuth(authSvc *auth.Service, adminToken string) func(http.Hand
 				}
 
 				// 2a. Try per-user API token (pf_ prefix)
-				if strings.HasPrefix(token, "pf_") {
-					user, _, err := authSvc.ValidateAPIToken(r.Context(), token)
-					if err != nil {
-						writeError(w, http.StatusUnauthorized, "invalid token")
-						return
-					}
-					ctx := context.WithValue(r.Context(), userContextKey, user)
-					next.ServeHTTP(w, r.WithContext(ctx))
+				user, _, err := authSvc.ValidateAPIToken(r.Context(), token)
+				if err != nil {
+					writeError(w, http.StatusUnauthorized, "invalid token")
 					return
 				}
-
-				// 2b. Legacy admin token fallback
-				if adminToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(adminToken)) == 1 {
-					adminUser := &store.User{
-						ID:   "admin",
-						Name: "Admin",
-						Role: store.RoleAdmin,
-					}
-					ctx := context.WithValue(r.Context(), userContextKey, adminUser)
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
-				}
-
-				writeError(w, http.StatusUnauthorized, "invalid token")
+				ctx := context.WithValue(r.Context(), userContextKey, user)
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 
@@ -192,13 +174,14 @@ func (rl *RateLimiter) Allow(key string) bool {
 }
 
 // RateLimitMiddleware rate-limits by remote IP.
+// Uses r.RemoteAddr only. Do not trust X-Forwarded-For or X-Real-IP headers
+// as they can be spoofed by clients. In production behind a reverse proxy,
+// configure the proxy to set RemoteAddr correctly (e.g. PROXY protocol) or
+// use a trusted-proxy-aware middleware upstream.
 func RateLimitMiddleware(limiter *RateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := r.RemoteAddr
-			if forwarded := r.Header.Get("X-Real-IP"); forwarded != "" {
-				ip = forwarded
-			}
 			if !limiter.Allow(ip) {
 				writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 				return

@@ -1,18 +1,25 @@
 import { useState } from 'preact/hooks'
 import { useApi } from '../hooks.js'
 import { apiPost } from '../api.js'
+import { useAuth } from '../auth.jsx'
 import { StatusBadge } from '../components/status-badge.jsx'
 import { TimeAgo } from '../components/time-ago.jsx'
 
 export function AlertDetail({ id }) {
   const { data: alert, loading, refetch } = useApi(`/alerts/${id}`)
   const { data: logs, refetch: refetchLogs } = useApi(`/alerts/${id}/logs`)
+  const { data: services } = useApi('/services')
+  const { user: currentUser } = useAuth()
   const [acting, setActing] = useState(false)
+  const [actionError, setActionError] = useState(null)
 
   const handleAction = async (action) => {
     setActing(true)
-    const { error } = await apiPost(`/alerts/${id}/${action}`, { user_id: '' })
-    if (!error) {
+    const { error } = await apiPost(`/alerts/${id}/${action}`, { user_id: currentUser?.id || '' })
+    if (error) {
+      setActionError(`Failed to ${action}: ${error}`)
+    } else {
+      setActionError(null)
       await refetch()
       await refetchLogs()
     }
@@ -43,6 +50,8 @@ export function AlertDetail({ id }) {
         </div>
       </div>
 
+      {actionError && <div class="alert alert-error">{actionError}</div>}
+
       <div class="detail-grid">
         <div class="detail-card">
           <h3>Details</h3>
@@ -56,7 +65,7 @@ export function AlertDetail({ id }) {
           </div>
           <div class="detail-row">
             <span class="detail-label">Service</span>
-            <span class="mono">{alert.service_id}</span>
+            <span>{(services || []).find(s => s.id === alert.service_id)?.name || alert.service_id}</span>
           </div>
           {alert.dedup_key && (
             <div class="detail-row">

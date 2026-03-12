@@ -38,6 +38,9 @@ func matchesCondition(field, matchType, value string) bool {
 	case "contains":
 		return strings.Contains(strings.ToLower(field), strings.ToLower(value))
 	case "regex":
+		if len(value) > 200 {
+			return false
+		}
 		re, err := regexp.Compile(value)
 		if err != nil {
 			return false

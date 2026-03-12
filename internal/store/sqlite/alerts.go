@@ -107,6 +107,11 @@ func (s *alertStore) List(ctx context.Context, filter store.AlertFilter) ([]stor
 		query += ` AND group_key = ?`
 		args = append(args, filter.GroupKey)
 	}
+	if filter.Search != "" {
+		query += ` AND (summary LIKE ? OR details LIKE ? OR source LIKE ?)`
+		like := "%" + filter.Search + "%"
+		args = append(args, like, like, like)
+	}
 
 	query += ` ORDER BY created_at DESC`
 
@@ -151,6 +156,12 @@ func (s *alertStore) Acknowledge(ctx context.Context, id string, userID string) 
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
+		// Already acknowledged/resolved is fine (idempotent). Only error if alert doesn't exist.
+		var exists bool
+		_ = s.db.QueryRowContext(ctx, `SELECT 1 FROM alerts WHERE id = ?`, id).Scan(&exists)
+		if exists {
+			return nil
+		}
 		return store.ErrNotFound
 	}
 	return nil
@@ -168,6 +179,12 @@ func (s *alertStore) Resolve(ctx context.Context, id string) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
+		// Already resolved is fine (idempotent). Only error if alert doesn't exist.
+		var exists bool
+		_ = s.db.QueryRowContext(ctx, `SELECT 1 FROM alerts WHERE id = ?`, id).Scan(&exists)
+		if exists {
+			return nil
+		}
 		return store.ErrNotFound
 	}
 	return nil

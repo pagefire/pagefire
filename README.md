@@ -106,7 +106,6 @@ PageFire supports three authentication methods:
 |--------|----------|
 | **Session cookie** | Web UI — set automatically on login |
 | **Per-user API token** | Scripts and integrations — generated in Profile & Settings, prefixed with `pf_` |
-| **Legacy admin token** | Backwards compatibility — set via `PAGEFIRE_ADMIN_TOKEN` env var |
 
 ### User invite flow
 
@@ -134,7 +133,6 @@ All configuration is via environment variables with the `PAGEFIRE_` prefix.
 | `PAGEFIRE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `PAGEFIRE_ENGINE_INTERVAL_SECONDS` | `5` | How often the engine processes alerts |
 | `PAGEFIRE_ALLOW_PRIVATE_WEBHOOKS` | `false` | Allow outbound webhooks to private/localhost IPs (useful for local dev) |
-| `PAGEFIRE_ADMIN_TOKEN` | — | Optional legacy API token for backwards compatibility |
 
 ### Email notifications (SMTP)
 
@@ -154,7 +152,7 @@ All configuration is via environment variables with the `PAGEFIRE_` prefix.
 
 ## API
 
-All endpoints require authentication (session cookie, API token, or legacy admin token) except health check and inbound integration webhooks.
+All endpoints require authentication (session cookie or API token) except health check and inbound integration webhooks.
 
 All list endpoints support `?limit=` and `?offset=` query parameters for pagination (max 1000 results).
 
@@ -272,7 +270,7 @@ web/                   Preact + Vite frontend (embedded in binary)
 
 ## Demo
 
-Two demo scripts exercise PageFire end-to-end. These scripts use the legacy admin token for API automation.
+Two demo scripts exercise PageFire end-to-end. These scripts use the setup endpoint and per-user API tokens for API automation.
 
 ### Single-user demo (`demo/demo.sh`)
 

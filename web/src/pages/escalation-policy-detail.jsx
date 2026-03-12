@@ -6,18 +6,20 @@ import { TextInput, SelectInput } from '../components/form-field.jsx'
 import { ConfirmDialog } from '../components/confirm-dialog.jsx'
 import { useToast } from '../components/toast.jsx'
 import { useAuth } from '../auth.jsx'
+import { TimeAgo } from '../components/time-ago.jsx'
 
 export function EscalationPolicyDetail({ id }) {
   const { data: policy, loading } = useApi(`/escalation-policies/${id}`)
   const { data: steps, refetch: refetchSteps } = useApi(`/escalation-policies/${id}/steps`)
   const { data: users } = useApi('/users')
   const { data: schedules } = useApi('/schedules')
+  const { data: services } = useApi('/services')
   const { user: currentUser } = useAuth()
   const isAdmin = currentUser?.role === 'admin'
   const toast = useToast()
 
   const [stepModalOpen, setStepModalOpen] = useState(false)
-  const [stepForm, setStepForm] = useState({ delay_minutes: '5' })
+  const [stepForm, setStepForm] = useState({ delay_minutes: '0' })
   const [stepErrors, setStepErrors] = useState({})
   const [deleteStep, setDeleteStep] = useState(null)
 
@@ -27,7 +29,6 @@ export function EscalationPolicyDetail({ id }) {
   const [targetErrors, setTargetErrors] = useState({})
   const [deleteTarget, setDeleteTarget] = useState(null)
 
-  // Step targets are fetched per step — we'll track them in state
   const [stepTargets, setStepTargets] = useState({})
 
   const fetchTargets = async (stepId) => {
@@ -37,14 +38,12 @@ export function EscalationPolicyDetail({ id }) {
     }
   }
 
-  // Load targets for all steps when steps change
   const loadAllTargets = () => {
     if (steps) {
       steps.forEach(s => fetchTargets(s.id))
     }
   }
 
-  // Trigger target load when steps data arrives
   if (steps && steps.length > 0 && Object.keys(stepTargets).length === 0) {
     loadAllTargets()
   }
@@ -54,7 +53,7 @@ export function EscalationPolicyDetail({ id }) {
 
   const targetTypeOptions = [
     { value: 'user', label: 'User' },
-    { value: 'schedule', label: 'Schedule' },
+    { value: 'schedule', label: 'On-Call Schedule' },
   ]
 
   const resolveTargetName = (type, targetId) => {
@@ -69,21 +68,24 @@ export function EscalationPolicyDetail({ id }) {
     return targetId
   }
 
+  // Services using this policy
+  const linkedServices = (services || []).filter(s => s.escalation_policy_id === id)
+
   const handleCreateStep = async () => {
     const delay = parseInt(stepForm.delay_minutes, 10)
-    if (!delay || delay < 1) {
-      setStepErrors({ delay_minutes: 'Must be at least 1 minute' })
+    if (isNaN(delay) || delay < 0) {
+      setStepErrors({ delay_minutes: 'Must be 0 or more minutes' })
       return
     }
-    const stepOrder = (steps || []).length + 1
-    const { error } = await apiPost(`/escalation-policies/${id}/steps`, { step_order: stepOrder, delay_minutes: delay })
+    const stepNumber = (steps || []).length
+    const { error } = await apiPost(`/escalation-policies/${id}/steps`, { step_number: stepNumber, delay_minutes: delay })
     if (error) {
       toast.error(error)
       return
     }
     toast.success('Step added')
     setStepModalOpen(false)
-    setStepForm({ delay_minutes: '5' })
+    setStepForm({ delay_minutes: '0' })
     refetchSteps()
   }
 
@@ -140,6 +142,10 @@ export function EscalationPolicyDetail({ id }) {
   if (loading) return <div class="loading">Loading...</div>
   if (!policy) return <div class="page"><p>Policy not found</p></div>
 
+  // Build a human-readable summary of the escalation flow
+  const sortedSteps = [...(steps || [])].sort((a, b) => a.step_number - b.step_number)
+  const totalCycles = 1 + (policy.repeat || 0)
+
   return (
     <div class="page">
       <div class="page-header">
@@ -148,6 +154,64 @@ export function EscalationPolicyDetail({ id }) {
           <h1>{policy.name}</h1>
         </div>
       </div>
+
+      {/* How It Works summary */}
+      {sortedSteps.length > 0 && (
+        <div class="detail-card" style="margin-bottom: 20px">
+          <h3>How It Works</h3>
+          <p class="text-muted" style="margin-bottom: 12px; font-size: 13px">
+            When an alert is triggered on a service using this policy, PageFire notifies targets in order.
+            If no one acknowledges, it moves to the next step after the configured delay.
+            {policy.repeat > 0
+              ? ` The entire sequence repeats ${policy.repeat} time${policy.repeat > 1 ? 's' : ''} (${totalCycles} total cycles) before giving up.`
+              : ' The sequence runs once with no repeats.'}
+          </p>
+          <div class="escalation-flow">
+            {sortedSteps.map((step, i) => {
+              const targets = stepTargets[step.id] || []
+              return (
+                <div key={step.id} class="flow-step">
+                  <div class="flow-step-marker">
+                    <span class="flow-step-number">{i + 1}</span>
+                    {i < sortedSteps.length - 1 && <div class="flow-step-line" />}
+                  </div>
+                  <div class="flow-step-content">
+                    <div class="flow-step-title">
+                      {step.delay_minutes === 0
+                        ? (i === 0 ? 'Immediately notify' : 'Then immediately notify')
+                        : `After ${step.delay_minutes} min, notify`}
+                    </div>
+                    <div class="flow-step-targets">
+                      {targets.length === 0 ? (
+                        <span class="text-muted">No targets configured</span>
+                      ) : (
+                        targets.map(t => (
+                          <span key={t.id} class="target-chip">
+                            <span class="source-tag">{t.target_type === 'schedule' ? 'schedule' : 'user'}</span>
+                            {resolveTargetName(t.target_type, t.target_id)}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+            {policy.repeat > 0 && (
+              <div class="flow-step">
+                <div class="flow-step-marker">
+                  <span class="flow-step-number">&#8635;</span>
+                </div>
+                <div class="flow-step-content">
+                  <div class="flow-step-title text-muted">
+                    Repeat from Step 1 ({policy.repeat}x)
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div class="detail-grid">
         <div class="detail-card">
@@ -159,27 +223,43 @@ export function EscalationPolicyDetail({ id }) {
             </div>
           )}
           <div class="detail-row">
-            <span class="detail-label">Repeat</span>
-            <span>{policy.repeat}x</span>
+            <span class="detail-label">Repeat Cycles</span>
+            <span>{policy.repeat === 0 ? 'None — run once' : `${policy.repeat}x (${totalCycles} total cycles)`}</span>
           </div>
+          <div class="detail-row">
+            <span class="detail-label">Steps</span>
+            <span>{sortedSteps.length}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Created</span>
+            <TimeAgo time={policy.created_at} />
+          </div>
+          {linkedServices.length > 0 && (
+            <div class="detail-row">
+              <span class="detail-label">Used By</span>
+              <span>{linkedServices.map(s => s.name).join(', ')}</span>
+            </div>
+          )}
         </div>
 
         <div class="detail-card">
           <div class="card-header-row">
             <h3>Escalation Steps</h3>
-            {isAdmin && <button class="btn btn-primary btn-sm" onClick={() => { setStepModalOpen(true); setStepErrors({}) }}>
+            {isAdmin && <button class="btn btn-primary btn-sm" onClick={() => { setStepModalOpen(true); setStepErrors({}); setStepForm({ delay_minutes: '0' }) }}>
               Add Step
             </button>}
           </div>
-          {!steps || steps.length === 0 ? (
+          {sortedSteps.length === 0 ? (
             <p class="text-muted">No escalation steps. Add steps to define who gets notified and when.</p>
           ) : (
             <div class="step-list">
-              {steps.map((step, i) => (
+              {sortedSteps.map((step, i) => (
                 <div key={step.id} class="step-item">
                   <div class="step-header">
                     <span class="step-number">Step {i + 1}</span>
-                    <span class="text-muted">Wait {step.delay_minutes}m before escalating</span>
+                    <span class="text-muted">
+                      {step.delay_minutes === 0 ? 'Notify immediately' : `Wait ${step.delay_minutes} min before notifying`}
+                    </span>
                     {isAdmin && (
                       <div class="sub-list-actions">
                         <button class="btn btn-primary btn-sm" onClick={() => openAddTarget(step.id)}>Add Target</button>
@@ -209,7 +289,20 @@ export function EscalationPolicyDetail({ id }) {
 
       {/* Add Step Modal */}
       <Modal open={stepModalOpen} onClose={() => setStepModalOpen(false)} title="Add Escalation Step">
-        <TextInput label="Delay (minutes)" value={stepForm.delay_minutes} onInput={(e) => setStepForm({ delay_minutes: e.target.value })} error={stepErrors.delay_minutes} type="number" />
+        <p class="text-muted" style="margin-bottom: 12px; font-size: 13px">
+          Configure how long to wait before notifying this step's targets. Use 0 for immediate notification.
+        </p>
+        <TextInput
+          label="Delay (minutes)"
+          value={stepForm.delay_minutes}
+          onInput={(e) => setStepForm({ delay_minutes: e.target.value })}
+          error={stepErrors.delay_minutes}
+          type="number"
+          placeholder="0"
+        />
+        <p class="text-muted" style="font-size: 12px; margin-top: 4px">
+          0 = notify immediately, 5 = wait 5 minutes after alert triggers (or after previous step)
+        </p>
         <div class="form-actions">
           <button class="btn btn-secondary" onClick={() => setStepModalOpen(false)}>Cancel</button>
           <button class="btn btn-primary" onClick={handleCreateStep}>Add Step</button>
@@ -220,11 +313,11 @@ export function EscalationPolicyDetail({ id }) {
       <Modal open={targetModalOpen} onClose={() => setTargetModalOpen(false)} title="Add Target">
         <SelectInput label="Type" value={targetForm.target_type} onChange={(e) => setTargetForm(prev => ({ ...prev, target_type: e.target.value, target_id: '' }))} options={targetTypeOptions} />
         <SelectInput
-          label={targetForm.target_type === 'user' ? 'User' : 'Schedule'}
+          label={targetForm.target_type === 'user' ? 'User' : 'On-Call Schedule'}
           value={targetForm.target_id}
           onChange={(e) => setTargetForm(prev => ({ ...prev, target_id: e.target.value }))}
           options={targetForm.target_type === 'user' ? userOptions : scheduleOptions}
-          placeholder={`Select ${targetForm.target_type}...`}
+          placeholder={`Select ${targetForm.target_type === 'schedule' ? 'schedule' : 'user'}...`}
           error={targetErrors.target_id}
         />
         <div class="form-actions">

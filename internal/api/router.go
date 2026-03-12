@@ -15,7 +15,7 @@ import (
 	"github.com/pagefire/pagefire/internal/store"
 )
 
-func NewRouter(s store.Store, resolver *oncall.Resolver, dispatcher *notification.Dispatcher, authSvc *auth.Service, adminToken string, frontendFS ...fs.FS) http.Handler {
+func NewRouter(s store.Store, resolver *oncall.Resolver, dispatcher *notification.Dispatcher, authSvc *auth.Service, frontendFS ...fs.FS) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -35,7 +35,7 @@ func NewRouter(s store.Store, resolver *oncall.Resolver, dispatcher *notificatio
 
 	// Auth endpoints (single mount — public + protected routes handled internally)
 	authHandler := NewAuthHandler(authSvc, s.Users())
-	authMiddleware := SessionOrTokenAuth(authSvc, adminToken)
+	authMiddleware := SessionOrTokenAuth(authSvc)
 	r.Mount("/api/v1/auth", authHandler.Routes(authMiddleware))
 
 	// Integration webhooks (authenticated by integration key secret, rate-limited)

@@ -6,9 +6,8 @@ import (
 )
 
 func TestLoadConfig_EnvVarMapping(t *testing.T) {
-	// Verify that flat env vars like PAGEFIRE_ADMIN_TOKEN map to "admin_token",
-	// not "admin.token" (which would happen if all underscores were replaced with dots).
-	t.Setenv("PAGEFIRE_ADMIN_TOKEN", "secret-123")
+	// Verify that flat env vars map correctly — underscores within field names
+	// are preserved (not replaced with dots).
 	t.Setenv("PAGEFIRE_PORT", "4000")
 	t.Setenv("PAGEFIRE_DATABASE_URL", "/tmp/test.db")
 	t.Setenv("PAGEFIRE_LOG_LEVEL", "debug")
@@ -19,9 +18,6 @@ func TestLoadConfig_EnvVarMapping(t *testing.T) {
 		t.Fatalf("LoadConfig: %v", err)
 	}
 
-	if cfg.AdminToken != "secret-123" {
-		t.Errorf("AdminToken: got %q, want %q", cfg.AdminToken, "secret-123")
-	}
 	if cfg.Port != 4000 {
 		t.Errorf("Port: got %d, want 4000", cfg.Port)
 	}
@@ -44,7 +40,6 @@ func TestLoadConfig_NestedEnvVars(t *testing.T) {
 	t.Setenv("PAGEFIRE_ENGINE_INTERVAL_SECONDS", "10")
 
 	// Clear vars that might interfere from other tests
-	os.Unsetenv("PAGEFIRE_ADMIN_TOKEN")
 	os.Unsetenv("PAGEFIRE_PORT")
 	os.Unsetenv("PAGEFIRE_DATABASE_URL")
 

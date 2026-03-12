@@ -23,6 +23,8 @@ func (h *IncidentHandler) Routes() chi.Router {
 	r.Put("/{id}", h.update)
 	r.Post("/{id}/updates", h.createUpdate)
 	r.Get("/{id}/updates", h.listUpdates)
+	r.Post("/{id}/services", h.addService)
+	r.Get("/{id}/services", h.listServices)
 	return r
 }
 
@@ -36,6 +38,14 @@ func (h *IncidentHandler) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "title is required")
 		return
 	}
+	if len(inc.Title) > 500 {
+		writeError(w, http.StatusBadRequest, "title must be 500 characters or fewer")
+		return
+	}
+	if len(inc.Summary) > 10000 {
+		writeError(w, http.StatusBadRequest, "summary must be 10000 characters or fewer")
+		return
+	}
 	if inc.Status == "" {
 		inc.Status = store.IncidentStatusTriggered
 	}
@@ -44,6 +54,9 @@ func (h *IncidentHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	if inc.Source == "" {
 		inc.Source = "manual"
+	}
+	if caller := UserFromContext(r.Context()); caller != nil {
+		inc.CreatedBy = caller.ID
 	}
 	if err := h.incidents.Create(r.Context(), &inc); err != nil {
 		handleStoreError(w, err)
@@ -63,8 +76,13 @@ func (h *IncidentHandler) get(w http.ResponseWriter, r *http.Request) {
 
 func (h *IncidentHandler) list(w http.ResponseWriter, r *http.Request) {
 	limit, offset := parseListLimit(r)
+	search := r.URL.Query().Get("search")
+	if len(search) > 200 {
+		search = search[:200]
+	}
 	filter := store.IncidentFilter{
 		Status: r.URL.Query().Get("status"),
+		Search: search,
 		Limit:  limit,
 		Offset: offset,
 	}
@@ -98,25 +116,33 @@ func (h *IncidentHandler) createUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u.IncidentID = chi.URLParam(r, "id")
-	if u.Status == "" || u.Message == "" {
-		writeError(w, http.StatusBadRequest, "status and message are required")
+	if u.Message == "" {
+		writeError(w, http.StatusBadRequest, "message is required")
 		return
 	}
+
+	// Auto-populate created_by from authenticated user
+	if caller := UserFromContext(r.Context()); caller != nil {
+		u.CreatedBy = caller.ID
+	}
+
 	if err := h.incidents.CreateUpdate(r.Context(), &u); err != nil {
 		handleStoreError(w, err)
 		return
 	}
 
-	// Sync the incident's status to match the latest timeline update
-	inc, err := h.incidents.Get(r.Context(), u.IncidentID)
-	if err != nil {
-		handleStoreError(w, err)
-		return
-	}
-	inc.Status = u.Status
-	if err := h.incidents.Update(r.Context(), inc); err != nil {
-		handleStoreError(w, err)
-		return
+	// If a status was provided, sync the incident's status
+	if u.Status != "" {
+		inc, err := h.incidents.Get(r.Context(), u.IncidentID)
+		if err != nil {
+			handleStoreError(w, err)
+			return
+		}
+		inc.Status = u.Status
+		if err := h.incidents.Update(r.Context(), inc); err != nil {
+			handleStoreError(w, err)
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusCreated, u)
@@ -129,4 +155,32 @@ func (h *IncidentHandler) listUpdates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, updates)
+}
+
+func (h *IncidentHandler) addService(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ServiceID string `json:"service_id"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.ServiceID == "" {
+		writeError(w, http.StatusBadRequest, "service_id is required")
+		return
+	}
+	if err := h.incidents.AddService(r.Context(), chi.URLParam(r, "id"), req.ServiceID); err != nil {
+		handleStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *IncidentHandler) listServices(w http.ResponseWriter, r *http.Request) {
+	ids, err := h.incidents.ListServices(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		handleStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ids)
 }

@@ -6,6 +6,7 @@ import { TextInput, SelectInput } from '../components/form-field.jsx'
 import { ConfirmDialog } from '../components/confirm-dialog.jsx'
 import { useToast } from '../components/toast.jsx'
 import { TimeAgo } from '../components/time-ago.jsx'
+import { CopyButton } from '../components/copy-button.jsx'
 import { useAuth } from '../auth.jsx'
 
 const INTEGRATION_TYPES = [
@@ -219,8 +220,9 @@ export function ServiceDetail({ id }) {
         {newKeySecret ? (
           <div>
             <p class="text-muted" style="margin-bottom: 12px">Copy this secret now — it won't be shown again.</p>
-            <div class="secret-display">
-              <code class="mono">{newKeySecret}</code>
+            <div class="secret-display-row">
+              <div class="secret-display"><code class="mono">{newKeySecret}</code></div>
+              <CopyButton text={newKeySecret} />
             </div>
             <p class="text-muted" style="margin-top: 12px; font-size: 12px">
               Webhook URL: <code class="mono">/api/v1/integrations/{newKeySecret}/alerts</code>

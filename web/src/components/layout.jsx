@@ -1,6 +1,8 @@
+import { useRouter } from 'preact-router'
 import { useAuth } from '../auth.jsx'
 
 const NAV_ITEMS = [
+  { path: '/', label: 'Dashboard', icon: '📊', exact: true },
   { path: '/alerts', label: 'Alerts', icon: '⚡' },
   { path: '/incidents', label: 'Incidents', icon: '🚨' },
   { path: '/services', label: 'Services', icon: '⚙️' },
@@ -12,7 +14,8 @@ const NAV_ITEMS = [
 
 export function Layout({ children }) {
   const { user, logout } = useAuth()
-  const currentPath = typeof window !== 'undefined' ? window.location.pathname : '/'
+  const [routerState] = useRouter()
+  const currentPath = routerState.url || '/'
 
   return (
     <div class="layout">
@@ -25,7 +28,7 @@ export function Layout({ children }) {
             <a
               key={item.path}
               href={item.path}
-              class={`nav-item ${currentPath.startsWith(item.path) || (item.path === '/alerts' && currentPath === '/') ? 'active' : ''}`}
+              class={`nav-item ${(item.exact ? currentPath === item.path : currentPath.startsWith(item.path)) ? 'active' : ''}`}
             >
               <span class="nav-icon">{item.icon}</span>
               {item.label}

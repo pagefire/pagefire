@@ -334,9 +334,9 @@ func TestAcknowledgeAlreadyAcknowledged(t *testing.T) {
 		t.Fatalf("first Acknowledge: %v", err)
 	}
 
-	err := alerts.Acknowledge(ctx, a.ID, u2.ID)
-	if !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("expected ErrNotFound on second Acknowledge, got %v", err)
+	// Idempotent: acknowledging an already-acknowledged alert succeeds silently
+	if err := alerts.Acknowledge(ctx, a.ID, u2.ID); err != nil {
+		t.Fatalf("second Acknowledge should be idempotent, got %v", err)
 	}
 }
 
@@ -384,9 +384,9 @@ func TestResolveAlreadyResolved(t *testing.T) {
 		t.Fatalf("first Resolve: %v", err)
 	}
 
-	err := alerts.Resolve(ctx, a.ID)
-	if !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("expected ErrNotFound on second Resolve, got %v", err)
+	// Idempotent: resolving an already-resolved alert succeeds silently
+	if err := alerts.Resolve(ctx, a.ID); err != nil {
+		t.Fatalf("second Resolve should be idempotent, got %v", err)
 	}
 }
 

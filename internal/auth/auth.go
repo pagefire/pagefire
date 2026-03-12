@@ -35,7 +35,7 @@ func NewService(users store.UserStore, db *sql.DB) *Service {
 	sm.Cookie.Name = "pagefire_session"
 	sm.Cookie.HttpOnly = true
 	sm.Cookie.SameSite = 3 // Lax
-	sm.Cookie.Secure = false // Set true in production behind TLS
+	sm.Cookie.Secure = true // localhost is treated as a secure context by browsers
 
 	return &Service{
 		users:          users,

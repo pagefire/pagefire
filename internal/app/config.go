@@ -14,7 +14,6 @@ type Config struct {
 	DatabaseDriver string       `koanf:"database_driver"` // "sqlite" or "postgres"
 	DataDir        string       `koanf:"data_dir"`
 	LogLevel       string       `koanf:"log_level"`
-	AdminToken     string       `koanf:"admin_token"`
 	AllowPrivateWebhooks bool         `koanf:"allow_private_webhooks"`
 	Engine               EngineConfig `koanf:"engine"`
 	SMTP           SMTPConfig   `koanf:"smtp"`
@@ -50,9 +49,9 @@ func LoadConfig() (*Config, error) {
 	k.Set("engine.interval_seconds", 5)
 	k.Set("smtp.port", 587)
 
-	// Environment variables: PAGEFIRE_PORT, PAGEFIRE_ADMIN_TOKEN, etc.
+	// Environment variables: PAGEFIRE_PORT, PAGEFIRE_DATABASE_URL, etc.
 	// Known prefixes are mapped to nested struct fields; single underscores
-	// within field names are preserved (e.g. admin_token, database_url).
+	// within field names are preserved (e.g. database_url, allow_private_webhooks).
 	nestedPrefixes := []string{"smtp_", "slack_", "engine_"}
 
 	err := k.Load(env.Provider("PAGEFIRE_", ".", func(s string) string {

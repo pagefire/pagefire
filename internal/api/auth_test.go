@@ -31,10 +31,10 @@ func newTestAuthMiddleware(t *testing.T) (func(http.Handler) http.Handler, *auth
 	t.Cleanup(func() { s.Close() })
 
 	authSvc := auth.NewService(s.Users(), s.DB())
-	return SessionOrTokenAuth(authSvc, "secret-token"), authSvc
+	return SessionOrTokenAuth(authSvc), authSvc
 }
 
-// ---------- SessionOrTokenAuth (legacy admin token) ----------
+// ---------- SessionOrTokenAuth ----------
 
 func TestSessionOrTokenAuth_NoAuthorizationHeader(t *testing.T) {
 	mw, _ := newTestAuthMiddleware(t)
@@ -93,32 +93,6 @@ func TestSessionOrTokenAuth_WrongToken(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
-	}
-}
-
-func TestSessionOrTokenAuth_LegacyAdminToken(t *testing.T) {
-	mw, _ := newTestAuthMiddleware(t)
-	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user := UserFromContext(r.Context())
-		if user == nil {
-			t.Fatal("expected user in context, got nil")
-		}
-		if user.ID != "admin" {
-			t.Errorf("user.ID = %q, want %q", user.ID, "admin")
-		}
-		if user.Role != store.RoleAdmin {
-			t.Errorf("user.Role = %q, want %q", user.Role, store.RoleAdmin)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("Authorization", "Bearer secret-token")
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", rr.Code, http.StatusOK)
 	}
 }
 
@@ -263,10 +237,11 @@ func TestRateLimitMiddleware_Returns429WhenLimited(t *testing.T) {
 	}
 }
 
-func TestRateLimitMiddleware_UsesXRealIP(t *testing.T) {
+func TestRateLimitMiddleware_IgnoresXRealIP(t *testing.T) {
 	rl := NewRateLimiter(1, time.Minute)
 	handler := RateLimitMiddleware(rl)(okHandler)
 
+	// First request from 127.0.0.1:1234 with X-Real-IP header
 	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
 	req1.RemoteAddr = "127.0.0.1:1234"
 	req1.Header.Set("X-Real-IP", "10.0.0.1")
@@ -277,14 +252,16 @@ func TestRateLimitMiddleware_UsesXRealIP(t *testing.T) {
 		t.Errorf("first request: status = %d, want %d", rr1.Code, http.StatusOK)
 	}
 
+	// Second request from different RemoteAddr but same X-Real-IP — should be allowed
+	// because we use RemoteAddr (not X-Real-IP) to prevent spoofing
 	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
 	req2.RemoteAddr = "127.0.0.1:5678"
 	req2.Header.Set("X-Real-IP", "10.0.0.1")
 	rr2 := httptest.NewRecorder()
 	handler.ServeHTTP(rr2, req2)
 
-	if rr2.Code != http.StatusTooManyRequests {
-		t.Errorf("second request: status = %d, want %d (X-Real-IP should be used as key)", rr2.Code, http.StatusTooManyRequests)
+	if rr2.Code != http.StatusOK {
+		t.Errorf("second request: status = %d, want %d (different RemoteAddr = different key)", rr2.Code, http.StatusOK)
 	}
 }
 

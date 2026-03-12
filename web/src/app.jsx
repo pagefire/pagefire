@@ -17,6 +17,7 @@ import { Profile } from './pages/profile.jsx'
 import { InviteAccept } from './pages/invite.jsx'
 import { Teams } from './pages/teams.jsx'
 import { TeamDetail } from './pages/team-detail.jsx'
+import { Dashboard } from './pages/dashboard.jsx'
 
 export function App() {
   // Invite page is public (no auth required)
@@ -32,7 +33,7 @@ export function App() {
         <ToastProvider>
         <Layout>
           <Router>
-            <Alerts path="/" />
+            <Dashboard path="/" />
             <Alerts path="/alerts" />
             <AlertDetail path="/alerts/:id" />
             <Services path="/services" />

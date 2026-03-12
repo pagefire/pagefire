@@ -51,6 +51,14 @@ func (h *IntegrationHandler) genericWebhook(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "summary is required")
 		return
 	}
+	if len(req.Summary) > 500 {
+		writeError(w, http.StatusBadRequest, "summary must be 500 characters or fewer")
+		return
+	}
+	if len(req.Details) > 10000 {
+		writeError(w, http.StatusBadRequest, "details must be 10000 characters or fewer")
+		return
+	}
 
 	alert, err := h.createAlertFromIntegration(r, ik, req.Summary, req.Details, req.DeduplicationKey, req.GroupKey)
 	if err != nil {

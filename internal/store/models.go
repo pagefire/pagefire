@@ -282,12 +282,13 @@ type IncidentService struct {
 
 // IncidentUpdate is a timeline entry on an incident.
 type IncidentUpdate struct {
-	ID         string    `json:"id"`
-	IncidentID string    `json:"incident_id"`
-	Status     string    `json:"status"`
-	Message    string    `json:"message"`
-	CreatedBy  string    `json:"created_by,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	IncidentID    string    `json:"incident_id"`
+	Status        string    `json:"status,omitempty"`
+	Message       string    `json:"message"`
+	CreatedBy     string    `json:"created_by,omitempty"`
+	CreatedByName string    `json:"created_by_name,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // EscalationSnapshot is a frozen copy of an escalation policy stored on an alert.
@@ -333,6 +334,7 @@ type AlertFilter struct {
 	Status    string `json:"status,omitempty"`
 	ServiceID string `json:"service_id,omitempty"`
 	GroupKey  string `json:"group_key,omitempty"`
+	Search    string `json:"search,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 	Offset    int    `json:"offset,omitempty"`
 }
@@ -340,6 +342,7 @@ type AlertFilter struct {
 type IncidentFilter struct {
 	Status    string `json:"status,omitempty"`
 	ServiceID string `json:"service_id,omitempty"`
+	Search    string `json:"search,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 	Offset    int    `json:"offset,omitempty"`
 }

@@ -7,6 +7,7 @@ import { StatusBadge } from '../components/status-badge.jsx'
 import { Modal } from '../components/modal.jsx'
 import { TextInput, SelectInput } from '../components/form-field.jsx'
 import { ConfirmDialog } from '../components/confirm-dialog.jsx'
+import { CopyButton } from '../components/copy-button.jsx'
 import { useToast } from '../components/toast.jsx'
 
 const TIMEZONES = [
@@ -156,8 +157,9 @@ export function Users() {
         {inviteUrl ? (
           <div>
             <p class="text-muted" style="margin-bottom: 12px">Share this link with the user. They'll set their own password. The link expires in 7 days.</p>
-            <div class="secret-display">
-              <code class="mono" style="word-break: break-all">{inviteUrl}</code>
+            <div class="secret-display-row">
+              <div class="secret-display"><code class="mono" style="word-break: break-all">{inviteUrl}</code></div>
+              <CopyButton text={inviteUrl} />
             </div>
             <div class="form-actions">
               <button class="btn btn-primary" onClick={() => { setModalOpen(false); setInviteUrl(null) }}>Done</button>

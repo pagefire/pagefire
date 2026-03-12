@@ -64,8 +64,6 @@ TOKEN="pf_your-api-token"
 API="http://localhost:3000/api/v1"
 ```
 
-> **Note:** You can also set `PAGEFIRE_ADMIN_TOKEN` as an environment variable for a legacy shared token. The examples below work with either method.
-
 ## Step 2: Create Users
 
 In OnCall, users come from Grafana's user system. In PageFire, you create users through the web UI or API. Admins create users with name, email, and role — the system generates a one-time invite link so each user sets their own password.
@@ -352,7 +350,6 @@ curl -s "$API/alerts" \
 
 | Variable | Default | Description |
 |---|---|---|
-| `PAGEFIRE_ADMIN_TOKEN` | — | Optional legacy API token for backwards compatibility |
 | `PAGEFIRE_PORT` | `3000` | HTTP listen port |
 | `PAGEFIRE_DATABASE_URL` | `./pagefire.db` | SQLite database path |
 | `PAGEFIRE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |

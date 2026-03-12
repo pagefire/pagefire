@@ -45,6 +45,14 @@ func (h *ServiceHandler) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and escalation_policy_id are required")
 		return
 	}
+	if len(svc.Name) > 200 {
+		writeError(w, http.StatusBadRequest, "name must be 200 characters or fewer")
+		return
+	}
+	if len(svc.Description) > 2000 {
+		writeError(w, http.StatusBadRequest, "description must be 2000 characters or fewer")
+		return
+	}
 	if err := h.services.Create(r.Context(), &svc); err != nil {
 		handleStoreError(w, err)
 		return
@@ -201,8 +209,8 @@ func (h *ServiceHandler) createRoutingRule(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "condition_value is required")
 		return
 	}
-	if len(rule.ConditionValue) > 1024 {
-		writeError(w, http.StatusBadRequest, "condition_value must be 1024 characters or fewer")
+	if len(rule.ConditionValue) > 200 {
+		writeError(w, http.StatusBadRequest, "condition_value must be 200 characters or fewer")
 		return
 	}
 	if rule.ConditionMatchType == "regex" {

@@ -17,9 +17,7 @@ import (
 	"github.com/pagefire/pagefire/internal/store/sqlite"
 )
 
-const testToken = "test-token-123"
-
-func newTestRouter(t *testing.T) (http.Handler, *sqlite.SQLiteStore) {
+func newTestRouter(t *testing.T) (http.Handler, *sqlite.SQLiteStore, string) {
 	t.Helper()
 	s, err := sqlite.New(":memory:")
 	if err != nil {
@@ -33,8 +31,30 @@ func newTestRouter(t *testing.T) (http.Handler, *sqlite.SQLiteStore) {
 	resolver := oncall.NewResolver(s.Schedules(), s.Users())
 	dispatcher := notification.NewDispatcher()
 	authSvc := auth.NewService(s.Users(), s.DB())
-	router := NewRouter(s, resolver, dispatcher, authSvc, testToken)
-	return router, s
+	router := NewRouter(s, resolver, dispatcher, authSvc)
+
+	// Create an admin user and generate an API token for testing
+	hash, err := auth.HashPassword("testpass123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminUser := &store.User{
+		Name:         "Test Admin",
+		Email:        "admin@test.dev",
+		Role:         store.RoleAdmin,
+		Timezone:     "UTC",
+		PasswordHash: hash,
+		IsActive:     true,
+	}
+	if err := s.Users().Create(context.Background(), adminUser); err != nil {
+		t.Fatal(err)
+	}
+	rawToken, _, err := authSvc.GenerateAPIToken(context.Background(), adminUser.ID, "test-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return router, s, rawToken
 }
 
 func doRequest(t *testing.T, router http.Handler, method, path string, body any, token string) *httptest.ResponseRecorder {
@@ -66,7 +86,7 @@ func decodeBody(t *testing.T, rr *httptest.ResponseRecorder, v any) {
 // --- Auth tests ---
 
 func TestHealthzNoAuth(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, _ := newTestRouter(t)
 	rr := doRequest(t, router, http.MethodGet, "/healthz", nil, "")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET /healthz: want 200, got %d", rr.Code)
@@ -79,7 +99,7 @@ func TestHealthzNoAuth(t *testing.T) {
 }
 
 func TestAuthRequired(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, _ := newTestRouter(t)
 	rr := doRequest(t, router, http.MethodGet, "/api/v1/users", nil, "")
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("GET /api/v1/users without auth: want 401, got %d", rr.Code)
@@ -87,7 +107,7 @@ func TestAuthRequired(t *testing.T) {
 }
 
 func TestAuthWrongToken(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, _ := newTestRouter(t)
 	rr := doRequest(t, router, http.MethodGet, "/api/v1/users", nil, "wrong-token")
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("GET /api/v1/users with wrong token: want 401, got %d", rr.Code)
@@ -95,7 +115,7 @@ func TestAuthWrongToken(t *testing.T) {
 }
 
 func TestAuthCorrectToken(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	rr := doRequest(t, router, http.MethodGet, "/api/v1/users", nil, testToken)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET /api/v1/users with correct token: want 200, got %d", rr.Code)
@@ -105,7 +125,7 @@ func TestAuthCorrectToken(t *testing.T) {
 // --- User CRUD tests ---
 
 func TestCreateUser(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	body := map[string]string{
 		"name":     "Alice",
 		"email":    "alice@example.com",
@@ -129,7 +149,7 @@ func TestCreateUser(t *testing.T) {
 }
 
 func TestCreateUserMissingName(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	body := map[string]string{
 		"email": "alice@example.com",
 	}
@@ -140,7 +160,7 @@ func TestCreateUserMissingName(t *testing.T) {
 }
 
 func TestCreateUserInvalidEmail(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	body := map[string]string{
 		"name":  "Alice",
 		"email": "not-an-email",
@@ -152,7 +172,7 @@ func TestCreateUserInvalidEmail(t *testing.T) {
 }
 
 func TestGetUser(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 
 	// Create a user first.
 	createBody := map[string]string{
@@ -187,7 +207,7 @@ func TestGetUser(t *testing.T) {
 }
 
 func TestGetUserNotFound(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	rr := doRequest(t, router, http.MethodGet, "/api/v1/users/nonexistent-id", nil, testToken)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("GET /api/v1/users/nonexistent: want 404, got %d", rr.Code)
@@ -195,7 +215,7 @@ func TestGetUserNotFound(t *testing.T) {
 }
 
 func TestUpdateUser(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 
 	// Create a user first.
 	createBody := map[string]string{
@@ -222,7 +242,7 @@ func TestUpdateUser(t *testing.T) {
 }
 
 func TestCreateUserRoleEnforced(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 
 	// Admin caller (legacy token = admin) can create admin users.
 	body := map[string]string{
@@ -245,7 +265,7 @@ func TestCreateUserRoleEnforced(t *testing.T) {
 // --- Service tests ---
 
 func TestCreateService(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 
 	// Create an escalation policy first (required by service).
 	epBody := map[string]any{
@@ -276,7 +296,7 @@ func TestCreateService(t *testing.T) {
 }
 
 func TestListServices(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	rr := doRequest(t, router, http.MethodGet, "/api/v1/services", nil, testToken)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET /api/v1/services: want 200, got %d", rr.Code)
@@ -285,12 +305,12 @@ func TestListServices(t *testing.T) {
 
 // --- Integration key tests ---
 
-func createTestService(t *testing.T, router http.Handler) string {
+func createTestService(t *testing.T, router http.Handler, token string) string {
 	t.Helper()
 
 	// Create escalation policy.
 	epBody := map[string]any{"name": "Test EP", "repeat": 0}
-	epRR := doRequest(t, router, http.MethodPost, "/api/v1/escalation-policies", epBody, testToken)
+	epRR := doRequest(t, router, http.MethodPost, "/api/v1/escalation-policies", epBody, token)
 	if epRR.Code != http.StatusCreated {
 		t.Fatalf("setup: create EP got %d; body: %s", epRR.Code, epRR.Body.String())
 	}
@@ -302,7 +322,7 @@ func createTestService(t *testing.T, router http.Handler) string {
 		"name":                 "Test Service",
 		"escalation_policy_id": ep["id"].(string),
 	}
-	svcRR := doRequest(t, router, http.MethodPost, "/api/v1/services", svcBody, testToken)
+	svcRR := doRequest(t, router, http.MethodPost, "/api/v1/services", svcBody, token)
 	if svcRR.Code != http.StatusCreated {
 		t.Fatalf("setup: create service got %d; body: %s", svcRR.Code, svcRR.Body.String())
 	}
@@ -312,8 +332,8 @@ func createTestService(t *testing.T, router http.Handler) string {
 }
 
 func TestCreateIntegrationKey(t *testing.T) {
-	router, _ := newTestRouter(t)
-	svcID := createTestService(t, router)
+	router, _, testToken := newTestRouter(t)
+	svcID := createTestService(t, router, testToken)
 
 	body := map[string]string{"name": "Grafana Webhook"}
 	rr := doRequest(t, router, http.MethodPost, "/api/v1/services/"+svcID+"/integration-keys", body, testToken)
@@ -329,8 +349,8 @@ func TestCreateIntegrationKey(t *testing.T) {
 }
 
 func TestListIntegrationKeysSecretMasked(t *testing.T) {
-	router, _ := newTestRouter(t)
-	svcID := createTestService(t, router)
+	router, _, testToken := newTestRouter(t)
+	svcID := createTestService(t, router, testToken)
 
 	// Create an integration key.
 	body := map[string]string{"name": "Test Key"}
@@ -362,7 +382,7 @@ func TestListIntegrationKeysSecretMasked(t *testing.T) {
 // --- Request body limit test ---
 
 func TestRequestBodyLimit(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 
 	// Send a body larger than 1MB.
 	bigBody := strings.NewReader(strings.Repeat("x", 2<<20))
@@ -381,7 +401,7 @@ func TestRequestBodyLimit(t *testing.T) {
 // --- Integration dedup test ---
 
 func TestIntegrationDedupReturns200(t *testing.T) {
-	router, s := newTestRouter(t)
+	router, s, _ := newTestRouter(t)
 	ctx := context.Background()
 
 	// Create escalation policy, service, integration key via store directly
@@ -428,7 +448,7 @@ func TestIntegrationDedupReturns200(t *testing.T) {
 // --- Security headers test ---
 
 func TestSecurityHeadersOnRoutes(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, _ := newTestRouter(t)
 	rr := doRequest(t, router, http.MethodGet, "/healthz", nil, "")
 
 	headers := map[string]string{
@@ -446,7 +466,7 @@ func TestSecurityHeadersOnRoutes(t *testing.T) {
 // --- Team CRUD tests ---
 
 func TestCreateTeam(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	body := map[string]string{
 		"name":        "Platform",
 		"description": "Platform team",
@@ -466,7 +486,7 @@ func TestCreateTeam(t *testing.T) {
 }
 
 func TestCreateTeamMissingName(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	body := map[string]string{"description": "no name"}
 	rr := doRequest(t, router, http.MethodPost, "/api/v1/teams", body, testToken)
 	if rr.Code != http.StatusBadRequest {
@@ -475,7 +495,7 @@ func TestCreateTeamMissingName(t *testing.T) {
 }
 
 func TestGetTeam(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 
 	// Create a team.
 	createBody := map[string]string{"name": "SRE"}
@@ -500,7 +520,7 @@ func TestGetTeam(t *testing.T) {
 }
 
 func TestGetTeamNotFound(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	rr := doRequest(t, router, http.MethodGet, "/api/v1/teams/nonexistent", nil, testToken)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("GET /api/v1/teams/nonexistent: want 404, got %d", rr.Code)
@@ -508,7 +528,7 @@ func TestGetTeamNotFound(t *testing.T) {
 }
 
 func TestListTeams(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	rr := doRequest(t, router, http.MethodGet, "/api/v1/teams", nil, testToken)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("GET /api/v1/teams: want 200, got %d", rr.Code)
@@ -516,7 +536,7 @@ func TestListTeams(t *testing.T) {
 }
 
 func TestUpdateTeam(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 
 	// Create a team.
 	createRR := doRequest(t, router, http.MethodPost, "/api/v1/teams", map[string]string{"name": "Old"}, testToken)
@@ -535,7 +555,7 @@ func TestUpdateTeam(t *testing.T) {
 }
 
 func TestDeleteTeam(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 
 	// Create a team.
 	createRR := doRequest(t, router, http.MethodPost, "/api/v1/teams", map[string]string{"name": "ToDelete"}, testToken)
@@ -560,9 +580,9 @@ func TestDeleteTeam(t *testing.T) {
 
 // --- Team membership API tests ---
 
-func createTestTeam(t *testing.T, router http.Handler) string {
+func createTestTeam(t *testing.T, router http.Handler, token string) string {
 	t.Helper()
-	rr := doRequest(t, router, http.MethodPost, "/api/v1/teams", map[string]string{"name": "TestTeam-" + t.Name()}, testToken)
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/teams", map[string]string{"name": "TestTeam-" + t.Name()}, token)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("setup: create team got %d; body: %s", rr.Code, rr.Body.String())
 	}
@@ -571,10 +591,10 @@ func createTestTeam(t *testing.T, router http.Handler) string {
 	return team["id"].(string)
 }
 
-func createTestUser(t *testing.T, router http.Handler) string {
+func createTestUser(t *testing.T, router http.Handler, token string) string {
 	t.Helper()
 	body := map[string]string{"name": "User-" + t.Name(), "email": t.Name() + "@example.com", "password": "TestPass123!"}
-	rr := doRequest(t, router, http.MethodPost, "/api/v1/users", body, testToken)
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/users", body, token)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("setup: create user got %d; body: %s", rr.Code, rr.Body.String())
 	}
@@ -584,9 +604,9 @@ func createTestUser(t *testing.T, router http.Handler) string {
 }
 
 func TestAddTeamMember(t *testing.T) {
-	router, _ := newTestRouter(t)
-	teamID := createTestTeam(t, router)
-	userID := createTestUser(t, router)
+	router, _, testToken := newTestRouter(t)
+	teamID := createTestTeam(t, router, testToken)
+	userID := createTestUser(t, router, testToken)
 
 	body := map[string]string{"user_id": userID, "role": "admin"}
 	rr := doRequest(t, router, http.MethodPost, "/api/v1/teams/"+teamID+"/members", body, testToken)
@@ -601,9 +621,9 @@ func TestAddTeamMember(t *testing.T) {
 }
 
 func TestAddTeamMemberDefaultRole(t *testing.T) {
-	router, _ := newTestRouter(t)
-	teamID := createTestTeam(t, router)
-	userID := createTestUser(t, router)
+	router, _, testToken := newTestRouter(t)
+	teamID := createTestTeam(t, router, testToken)
+	userID := createTestUser(t, router, testToken)
 
 	// Omit role — should default to "member".
 	body := map[string]string{"user_id": userID}
@@ -619,9 +639,9 @@ func TestAddTeamMemberDefaultRole(t *testing.T) {
 }
 
 func TestAddTeamMemberInvalidRole(t *testing.T) {
-	router, _ := newTestRouter(t)
-	teamID := createTestTeam(t, router)
-	userID := createTestUser(t, router)
+	router, _, testToken := newTestRouter(t)
+	teamID := createTestTeam(t, router, testToken)
+	userID := createTestUser(t, router, testToken)
 
 	body := map[string]string{"user_id": userID, "role": "superuser"}
 	rr := doRequest(t, router, http.MethodPost, "/api/v1/teams/"+teamID+"/members", body, testToken)
@@ -631,8 +651,8 @@ func TestAddTeamMemberInvalidRole(t *testing.T) {
 }
 
 func TestAddTeamMemberMissingUserID(t *testing.T) {
-	router, _ := newTestRouter(t)
-	teamID := createTestTeam(t, router)
+	router, _, testToken := newTestRouter(t)
+	teamID := createTestTeam(t, router, testToken)
 
 	body := map[string]string{"role": "member"}
 	rr := doRequest(t, router, http.MethodPost, "/api/v1/teams/"+teamID+"/members", body, testToken)
@@ -642,9 +662,9 @@ func TestAddTeamMemberMissingUserID(t *testing.T) {
 }
 
 func TestListTeamMembers(t *testing.T) {
-	router, _ := newTestRouter(t)
-	teamID := createTestTeam(t, router)
-	userID := createTestUser(t, router)
+	router, _, testToken := newTestRouter(t)
+	teamID := createTestTeam(t, router, testToken)
+	userID := createTestUser(t, router, testToken)
 
 	// Add member.
 	addBody := map[string]string{"user_id": userID, "role": "member"}
@@ -662,9 +682,9 @@ func TestListTeamMembers(t *testing.T) {
 }
 
 func TestRemoveTeamMember(t *testing.T) {
-	router, _ := newTestRouter(t)
-	teamID := createTestTeam(t, router)
-	userID := createTestUser(t, router)
+	router, _, testToken := newTestRouter(t)
+	teamID := createTestTeam(t, router, testToken)
+	userID := createTestUser(t, router, testToken)
 
 	// Add then remove.
 	addBody := map[string]string{"user_id": userID, "role": "member"}
@@ -685,7 +705,7 @@ func TestRemoveTeamMember(t *testing.T) {
 }
 
 func TestTeamsRequireAuth(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, _ := newTestRouter(t)
 	rr := doRequest(t, router, http.MethodGet, "/api/v1/teams", nil, "")
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("GET /api/v1/teams without auth: want 401, got %d", rr.Code)
@@ -694,10 +714,10 @@ func TestTeamsRequireAuth(t *testing.T) {
 
 // --- Routing rule API tests ---
 
-func createTestEP(t *testing.T, router http.Handler) string {
+func createTestEP(t *testing.T, router http.Handler, token string) string {
 	t.Helper()
 	body := map[string]any{"name": "EP-" + t.Name(), "repeat": 0}
-	rr := doRequest(t, router, http.MethodPost, "/api/v1/escalation-policies", body, testToken)
+	rr := doRequest(t, router, http.MethodPost, "/api/v1/escalation-policies", body, token)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("setup: create EP got %d; body: %s", rr.Code, rr.Body.String())
 	}
@@ -707,9 +727,9 @@ func createTestEP(t *testing.T, router http.Handler) string {
 }
 
 func TestCreateRoutingRule(t *testing.T) {
-	router, _ := newTestRouter(t)
-	svcID := createTestService(t, router)
-	epID := createTestEP(t, router)
+	router, _, testToken := newTestRouter(t)
+	svcID := createTestService(t, router, testToken)
+	epID := createTestEP(t, router, testToken)
 
 	body := map[string]any{
 		"condition_field":      "summary",
@@ -733,9 +753,9 @@ func TestCreateRoutingRule(t *testing.T) {
 }
 
 func TestCreateRoutingRuleInvalidField(t *testing.T) {
-	router, _ := newTestRouter(t)
-	svcID := createTestService(t, router)
-	epID := createTestEP(t, router)
+	router, _, testToken := newTestRouter(t)
+	svcID := createTestService(t, router, testToken)
+	epID := createTestEP(t, router, testToken)
 
 	body := map[string]any{
 		"condition_field":      "invalid",
@@ -750,9 +770,9 @@ func TestCreateRoutingRuleInvalidField(t *testing.T) {
 }
 
 func TestCreateRoutingRuleInvalidMatchType(t *testing.T) {
-	router, _ := newTestRouter(t)
-	svcID := createTestService(t, router)
-	epID := createTestEP(t, router)
+	router, _, testToken := newTestRouter(t)
+	svcID := createTestService(t, router, testToken)
+	epID := createTestEP(t, router, testToken)
 
 	body := map[string]any{
 		"condition_field":      "summary",
@@ -767,9 +787,9 @@ func TestCreateRoutingRuleInvalidMatchType(t *testing.T) {
 }
 
 func TestCreateRoutingRuleMissingValue(t *testing.T) {
-	router, _ := newTestRouter(t)
-	svcID := createTestService(t, router)
-	epID := createTestEP(t, router)
+	router, _, testToken := newTestRouter(t)
+	svcID := createTestService(t, router, testToken)
+	epID := createTestEP(t, router, testToken)
 
 	body := map[string]any{
 		"condition_field":      "summary",
@@ -784,8 +804,8 @@ func TestCreateRoutingRuleMissingValue(t *testing.T) {
 }
 
 func TestCreateRoutingRuleMissingEP(t *testing.T) {
-	router, _ := newTestRouter(t)
-	svcID := createTestService(t, router)
+	router, _, testToken := newTestRouter(t)
+	svcID := createTestService(t, router, testToken)
 
 	body := map[string]any{
 		"condition_field":      "summary",
@@ -799,9 +819,9 @@ func TestCreateRoutingRuleMissingEP(t *testing.T) {
 }
 
 func TestListRoutingRules(t *testing.T) {
-	router, _ := newTestRouter(t)
-	svcID := createTestService(t, router)
-	epID := createTestEP(t, router)
+	router, _, testToken := newTestRouter(t)
+	svcID := createTestService(t, router, testToken)
+	epID := createTestEP(t, router, testToken)
 
 	// Empty list.
 	rr := doRequest(t, router, http.MethodGet, "/api/v1/services/"+svcID+"/routing-rules", nil, testToken)
@@ -830,9 +850,9 @@ func TestListRoutingRules(t *testing.T) {
 }
 
 func TestDeleteRoutingRule(t *testing.T) {
-	router, _ := newTestRouter(t)
-	svcID := createTestService(t, router)
-	epID := createTestEP(t, router)
+	router, _, testToken := newTestRouter(t)
+	svcID := createTestService(t, router, testToken)
+	epID := createTestEP(t, router, testToken)
 
 	// Create a rule.
 	body := map[string]any{
@@ -862,9 +882,9 @@ func TestDeleteRoutingRule(t *testing.T) {
 }
 
 func TestCreateRoutingRuleInvalidRegex(t *testing.T) {
-	router, _ := newTestRouter(t)
-	svcID := createTestService(t, router)
-	epID := createTestEP(t, router)
+	router, _, testToken := newTestRouter(t)
+	svcID := createTestService(t, router, testToken)
+	epID := createTestEP(t, router, testToken)
 
 	body := map[string]any{
 		"condition_field":      "summary",
@@ -879,9 +899,9 @@ func TestCreateRoutingRuleInvalidRegex(t *testing.T) {
 }
 
 func TestCreateRoutingRuleValueTooLong(t *testing.T) {
-	router, _ := newTestRouter(t)
-	svcID := createTestService(t, router)
-	epID := createTestEP(t, router)
+	router, _, testToken := newTestRouter(t)
+	svcID := createTestService(t, router, testToken)
+	epID := createTestEP(t, router, testToken)
 
 	body := map[string]any{
 		"condition_field":      "summary",
@@ -898,7 +918,7 @@ func TestCreateRoutingRuleValueTooLong(t *testing.T) {
 // --- Alert API tests ---
 
 func TestCreateAlert(t *testing.T) {
-	router, s := newTestRouter(t)
+	router, s, testToken := newTestRouter(t)
 	ctx := context.Background()
 
 	ep := &store.EscalationPolicy{Name: "EP"}
@@ -925,7 +945,7 @@ func TestCreateAlert(t *testing.T) {
 }
 
 func TestCreateAlertMissingFields(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	body := map[string]string{"summary": "no service"}
 	rr := doRequest(t, router, http.MethodPost, "/api/v1/alerts", body, testToken)
 	if rr.Code != http.StatusBadRequest {
@@ -934,7 +954,7 @@ func TestCreateAlertMissingFields(t *testing.T) {
 }
 
 func TestGetAlert(t *testing.T) {
-	router, s := newTestRouter(t)
+	router, s, testToken := newTestRouter(t)
 	ctx := context.Background()
 
 	ep := &store.EscalationPolicy{Name: "EP"}
@@ -960,7 +980,7 @@ func TestGetAlert(t *testing.T) {
 }
 
 func TestGetAlertNotFound(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	rr := doRequest(t, router, http.MethodGet, "/api/v1/alerts/nonexistent", nil, testToken)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("GET /api/v1/alerts/nonexistent: want 404, got %d", rr.Code)
@@ -968,7 +988,7 @@ func TestGetAlertNotFound(t *testing.T) {
 }
 
 func TestListAlerts(t *testing.T) {
-	router, s := newTestRouter(t)
+	router, s, testToken := newTestRouter(t)
 	ctx := context.Background()
 
 	ep := &store.EscalationPolicy{Name: "EP"}
@@ -993,7 +1013,7 @@ func TestListAlerts(t *testing.T) {
 }
 
 func TestListAlertsFilterByStatus(t *testing.T) {
-	router, s := newTestRouter(t)
+	router, s, testToken := newTestRouter(t)
 	ctx := context.Background()
 
 	ep := &store.EscalationPolicy{Name: "EP"}
@@ -1021,7 +1041,7 @@ func TestListAlertsFilterByStatus(t *testing.T) {
 }
 
 func TestAcknowledgeAlert(t *testing.T) {
-	router, s := newTestRouter(t)
+	router, s, testToken := newTestRouter(t)
 	ctx := context.Background()
 
 	ep := &store.EscalationPolicy{Name: "EP"}
@@ -1052,7 +1072,7 @@ func TestAcknowledgeAlert(t *testing.T) {
 }
 
 func TestResolveAlert(t *testing.T) {
-	router, s := newTestRouter(t)
+	router, s, testToken := newTestRouter(t)
 	ctx := context.Background()
 
 	ep := &store.EscalationPolicy{Name: "EP"}
@@ -1080,7 +1100,7 @@ func TestResolveAlert(t *testing.T) {
 }
 
 func TestListAlertLogs(t *testing.T) {
-	router, s := newTestRouter(t)
+	router, s, testToken := newTestRouter(t)
 	ctx := context.Background()
 
 	ep := &store.EscalationPolicy{Name: "EP"}
@@ -1106,7 +1126,7 @@ func TestListAlertLogs(t *testing.T) {
 }
 
 func TestCreateAlertWithGroupKey(t *testing.T) {
-	router, s := newTestRouter(t)
+	router, s, testToken := newTestRouter(t)
 	ctx := context.Background()
 
 	ep := &store.EscalationPolicy{Name: "EP"}
@@ -1149,7 +1169,7 @@ func TestCreateAlertWithGroupKey(t *testing.T) {
 // --- Incident API tests ---
 
 func TestCreateIncident(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	body := map[string]string{"title": "Major outage", "severity": "critical"}
 	rr := doRequest(t, router, http.MethodPost, "/api/v1/incidents", body, testToken)
 	if rr.Code != http.StatusCreated {
@@ -1166,7 +1186,7 @@ func TestCreateIncident(t *testing.T) {
 }
 
 func TestCreateIncidentMissingTitle(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	body := map[string]string{"severity": "critical"}
 	rr := doRequest(t, router, http.MethodPost, "/api/v1/incidents", body, testToken)
 	if rr.Code != http.StatusBadRequest {
@@ -1175,7 +1195,7 @@ func TestCreateIncidentMissingTitle(t *testing.T) {
 }
 
 func TestGetIncident(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	body := map[string]string{"title": "Outage"}
 	createRR := doRequest(t, router, http.MethodPost, "/api/v1/incidents", body, testToken)
 	var created map[string]any
@@ -1189,7 +1209,7 @@ func TestGetIncident(t *testing.T) {
 }
 
 func TestGetIncidentNotFound(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	rr := doRequest(t, router, http.MethodGet, "/api/v1/incidents/nonexistent", nil, testToken)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("GET /api/v1/incidents/nonexistent: want 404, got %d", rr.Code)
@@ -1197,7 +1217,7 @@ func TestGetIncidentNotFound(t *testing.T) {
 }
 
 func TestListIncidents(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	doRequest(t, router, http.MethodPost, "/api/v1/incidents", map[string]string{"title": "Inc 1"}, testToken)
 	doRequest(t, router, http.MethodPost, "/api/v1/incidents", map[string]string{"title": "Inc 2"}, testToken)
 
@@ -1213,7 +1233,7 @@ func TestListIncidents(t *testing.T) {
 }
 
 func TestUpdateIncident(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	createRR := doRequest(t, router, http.MethodPost, "/api/v1/incidents", map[string]string{"title": "Outage"}, testToken)
 	var created map[string]any
 	decodeBody(t, createRR, &created)
@@ -1228,7 +1248,7 @@ func TestUpdateIncident(t *testing.T) {
 }
 
 func TestCreateIncidentUpdate(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	createRR := doRequest(t, router, http.MethodPost, "/api/v1/incidents", map[string]string{"title": "Outage"}, testToken)
 	var created map[string]any
 	decodeBody(t, createRR, &created)
@@ -1253,7 +1273,7 @@ func TestCreateIncidentUpdate(t *testing.T) {
 }
 
 func TestCreateIncidentUpdateMissingFields(t *testing.T) {
-	router, _ := newTestRouter(t)
+	router, _, testToken := newTestRouter(t)
 	createRR := doRequest(t, router, http.MethodPost, "/api/v1/incidents", map[string]string{"title": "Outage"}, testToken)
 	var created map[string]any
 	decodeBody(t, createRR, &created)
@@ -1268,7 +1288,7 @@ func TestCreateIncidentUpdateMissingFields(t *testing.T) {
 }
 
 func TestRoutingIntegration(t *testing.T) {
-	router, s := newTestRouter(t)
+	router, s, _ := newTestRouter(t)
 	ctx := context.Background()
 
 	// Create two escalation policies.
