@@ -255,6 +255,11 @@ func (h *UserHandler) createContactMethod(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "invalid webhook URL")
 			return
 		}
+	case "sms", "phone":
+		if !validateE164(cm.Value) {
+			writeError(w, http.StatusBadRequest, "invalid phone number, use E.164 format (e.g. +12025551234)")
+			return
+		}
 	case "slack_dm":
 		if cm.Value == "" {
 			writeError(w, http.StatusBadRequest, "slack user ID required")

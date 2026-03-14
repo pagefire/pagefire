@@ -80,6 +80,19 @@ func validateEmail(email string) bool {
 	return err == nil
 }
 
+// validateE164 checks if a phone number is in E.164 format (+1234567890).
+func validateE164(phone string) bool {
+	if len(phone) < 2 || len(phone) > 16 || phone[0] != '+' {
+		return false
+	}
+	for _, c := range phone[1:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return phone[1] >= '1' && phone[1] <= '9'
+}
+
 // validateTimezone checks if a timezone string is valid.
 func validateTimezone(tz string) bool {
 	_, err := time.LoadLocation(tz)

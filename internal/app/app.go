@@ -80,6 +80,11 @@ func New(cfg *Config) (*App, error) {
 	if cfg.Slack.BotToken != "" {
 		dispatcher.Register(providers.NewSlack(cfg.Slack.BotToken))
 	}
+	if cfg.Twilio.AccountSID != "" && cfg.Twilio.AuthToken != "" && cfg.Twilio.FromNumber != "" {
+		dispatcher.Register(providers.NewTwilioSMS(cfg.Twilio.AccountSID, cfg.Twilio.AuthToken, cfg.Twilio.FromNumber))
+		dispatcher.Register(providers.NewTwilioCall(cfg.Twilio.AccountSID, cfg.Twilio.AuthToken, cfg.Twilio.FromNumber))
+		slog.Info("twilio providers registered", "from", cfg.Twilio.FromNumber)
+	}
 
 	// On-call resolver
 	resolver := oncall.NewResolver(s.Schedules(), s.Users())

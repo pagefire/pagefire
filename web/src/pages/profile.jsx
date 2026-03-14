@@ -10,12 +10,16 @@ import { TimeAgo } from '../components/time-ago.jsx'
 
 const CONTACT_TYPES = [
   { value: 'email', label: 'Email' },
+  { value: 'sms', label: 'SMS' },
+  { value: 'phone', label: 'Phone Call' },
   { value: 'slack_dm', label: 'Slack DM' },
   { value: 'webhook', label: 'Webhook' },
 ]
 
 const CONTACT_PLACEHOLDERS = {
   email: 'you@company.com',
+  sms: '+12025551234',
+  phone: '+12025551234',
   slack_dm: 'U01ABC123',
   webhook: 'https://hooks.example.com/notify',
 }

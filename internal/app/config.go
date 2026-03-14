@@ -18,6 +18,7 @@ type Config struct {
 	Engine               EngineConfig `koanf:"engine"`
 	SMTP           SMTPConfig   `koanf:"smtp"`
 	Slack          SlackConfig  `koanf:"slack"`
+	Twilio         TwilioConfig `koanf:"twilio"`
 }
 
 type EngineConfig struct {
@@ -36,6 +37,12 @@ type SlackConfig struct {
 	BotToken string `koanf:"bot_token"`
 }
 
+type TwilioConfig struct {
+	AccountSID string `koanf:"account_sid"`
+	AuthToken  string `koanf:"auth_token"`
+	FromNumber string `koanf:"from_number"`
+}
+
 // LoadConfig loads configuration from environment variables with PAGEFIRE_ prefix.
 // Precedence: env vars > defaults.
 func LoadConfig() (*Config, error) {
@@ -52,7 +59,7 @@ func LoadConfig() (*Config, error) {
 	// Environment variables: PAGEFIRE_PORT, PAGEFIRE_DATABASE_URL, etc.
 	// Known prefixes are mapped to nested struct fields; single underscores
 	// within field names are preserved (e.g. database_url, allow_private_webhooks).
-	nestedPrefixes := []string{"smtp_", "slack_", "engine_"}
+	nestedPrefixes := []string{"smtp_", "slack_", "engine_", "twilio_"}
 
 	err := k.Load(env.Provider("PAGEFIRE_", ".", func(s string) string {
 		key := strings.ToLower(strings.TrimPrefix(s, "PAGEFIRE_"))
