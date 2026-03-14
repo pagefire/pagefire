@@ -2,14 +2,16 @@
 set -euo pipefail
 
 # --- PageFire Live Demo -------------------------------------------------------
-# Uses the EXISTING pagefire.db (preserves users + sessions so you stay logged in).
-# Wipes all other data, sets up aru-jo on-call, and runs a fake app + health
-# checker that fires real alerts through the integration webhook.
+# Fully self-contained demo. Wipes the DB, creates a demo user, sets up on-call,
+# and runs a fake app + health checker that fires real alerts.
 #
 # Usage:
 #   ./demo/live-demo.sh
 #
-# Then open http://localhost:3000 in your browser (you should already be logged in).
+# Then open http://localhost:3000 and log in as:
+#   Email:    demo@pagefire.local
+#   Password: demo-password
+#
 # Kill the fake app to trigger alerts, restart it to auto-resolve.
 # -------------------------------------------------------------------------------
 
@@ -19,7 +21,9 @@ NOTIFY_PORT=9090
 API="http://localhost:${PAGEFIRE_PORT}/api/v1"
 DB="pagefire.db"
 PIDS=()
-COOKIE_JAR="/tmp/pagefire-live-cookies.txt"
+DEMO_NAME="Demo User"
+DEMO_EMAIL="demo@pagefire.local"
+DEMO_PASSWORD="demo-password"
 
 cd "$(dirname "$0")/.."
 
@@ -29,10 +33,8 @@ cleanup() {
   for pid in "${PIDS[@]}"; do
     kill "$pid" 2>/dev/null || true
   done
-  # Kill fake app and notification receiver
   kill $(lsof -ti:${MYAPP_PORT}) 2>/dev/null || true
   kill $(lsof -ti:${NOTIFY_PORT}) 2>/dev/null || true
-  rm -f "${COOKIE_JAR}"
   echo "Done. PageFire is still running on :${PAGEFIRE_PORT}."
 }
 trap cleanup EXIT
@@ -48,41 +50,10 @@ log "Stopping existing PageFire (if running)..."
 kill $(lsof -ti:${PAGEFIRE_PORT}) 2>/dev/null || true
 sleep 1
 
-# --- Wipe data (keep users + sessions) ----------------------------------------
-log "Wiping data (keeping users & sessions)..."
-sqlite3 "${DB}" <<'SQL'
-DELETE FROM alert_logs;
-DELETE FROM notification_queue;
-DELETE FROM alerts;
-DELETE FROM incident_updates;
-DELETE FROM incident_services;
-DELETE FROM incidents;
-DELETE FROM routing_rules;
-DELETE FROM integration_keys;
-DELETE FROM services;
-DELETE FROM escalation_step_targets;
-DELETE FROM escalation_steps;
-DELETE FROM escalation_policies;
-DELETE FROM schedule_overrides;
-DELETE FROM rotation_participants;
-DELETE FROM rotations;
-DELETE FROM schedules;
-DELETE FROM team_members;
-DELETE FROM teams;
-DELETE FROM contact_methods;
-DELETE FROM notification_rules;
-DELETE FROM api_tokens;
-DELETE FROM invite_tokens;
-SQL
-ok "Data wiped (users & sessions preserved)"
-
-# --- Get aru-jo user ID -------------------------------------------------------
-ARU_ID=$(sqlite3 "${DB}" "SELECT id FROM users WHERE email = 'aravindjyothi97@gmail.com';")
-if [ -z "$ARU_ID" ]; then
-  echo "Error: aru-jo user not found in DB"
-  exit 1
-fi
-ok "Found aru-jo: ${ARU_ID}"
+# --- Wipe entire DB -----------------------------------------------------------
+log "Resetting database..."
+rm -f "${DB}" "${DB}-shm" "${DB}-wal"
+ok "Database reset"
 
 # --- Start notification receiver -----------------------------------------------
 log "Starting notification receiver on :${NOTIFY_PORT}..."
@@ -134,37 +105,47 @@ if ! curl -sf "http://localhost:${PAGEFIRE_PORT}/healthz" >/dev/null 2>&1; then
 fi
 ok "PageFire is running"
 
+# --- Create demo user via setup endpoint --------------------------------------
+log "Creating demo user..."
+curl -sf -X POST "${API}/auth/setup" \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"${DEMO_NAME}\",\"email\":\"${DEMO_EMAIL}\",\"password\":\"${DEMO_PASSWORD}\"}" >/dev/null
+ok "Demo user created (${DEMO_EMAIL} / ${DEMO_PASSWORD})"
+
 # --- Login and get API token ---------------------------------------------------
-log "Logging in as aru-jo to get API token..."
+log "Logging in..."
+COOKIE_JAR=$(mktemp)
 curl -sf -X POST "${API}/auth/login" \
   -c "${COOKIE_JAR}" \
   -H "Content-Type: application/json" \
-  -d '{"email":"aravindjyothi97@gmail.com","password":"demo-password-123"}' >/dev/null 2>&1 || {
-  echo "Warning: Login failed. You may need to update the password in this script."
-  echo "Continuing with session cookie from browser..."
-}
+  -d "{\"email\":\"${DEMO_EMAIL}\",\"password\":\"${DEMO_PASSWORD}\"}" >/dev/null
+
+DEMO_USER_ID=$(curl -sf "${API}/auth/me" \
+  -b "${COOKIE_JAR}" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 
 API_TOKEN=$(curl -sf -X POST "${API}/auth/tokens" \
   -b "${COOKIE_JAR}" \
   -H "Content-Type: application/json" \
   -d '{"name":"live-demo-script"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
-ok "Generated API token for scripting"
+rm -f "${COOKIE_JAR}"
+ok "Logged in and generated API token"
 
-# --- Set up contact method + notification rule for aru-jo ----------------------
-log "Setting up aru-jo's contact method & notifications..."
+# --- Set up contact method + notification rule --------------------------------
+log "Setting up contact method & notifications..."
 
-CM_ID=$(curl -sf -X POST "${API}/users/${ARU_ID}/contact-methods" \
+CM_ID=$(curl -sf -X POST "${API}/users/${DEMO_USER_ID}/contact-methods" \
   -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
   -d "{\"type\":\"webhook\",\"value\":\"http://localhost:${NOTIFY_PORT}/notify\"}" | jq_id)
 ok "Contact method: webhook -> localhost:${NOTIFY_PORT}"
 
-curl -sf -X POST "${API}/users/${ARU_ID}/notification-rules" \
+curl -sf -X POST "${API}/users/${DEMO_USER_ID}/notification-rules" \
   -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
   -d "{\"contact_method_id\":\"${CM_ID}\",\"delay_minutes\":0}" >/dev/null
 ok "Notification rule: notify immediately"
 
-# --- Create on-call schedule with aru-jo --------------------------------------
+# --- Create on-call schedule with demo user --------------------------------------
 log "Creating on-call schedule..."
 
 SCHEDULE_ID=$(curl -sf -X POST "${API}/schedules" \
@@ -180,8 +161,8 @@ ok "Rotation: weekly starting now"
 
 curl -sf -X POST "${API}/schedules/${SCHEDULE_ID}/rotations/${ROTATION_ID}/participants" \
   -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
-  -d "{\"user_id\":\"${ARU_ID}\",\"position\":0}" >/dev/null
-ok "aru-jo is on-call (position 0)"
+  -d "{\"user_id\":\"${DEMO_USER_ID}\",\"position\":0}" >/dev/null
+ok "demo user is on-call (position 0)"
 
 ONCALL=$(curl -sf "${API}/oncall/${SCHEDULE_ID}" \
   -H "Authorization: Bearer ${API_TOKEN}" | python3 -c "import sys,json; users=json.load(sys.stdin); print(users[0]['name'] if users else 'nobody')")
@@ -203,7 +184,7 @@ ok "Step 0: notify immediately, re-escalate after 1 min"
 curl -sf -X POST "${API}/escalation-policies/${EP_ID}/steps/${STEP_ID}/targets" \
   -H "Authorization: Bearer ${API_TOKEN}" -H "Content-Type: application/json" \
   -d "{\"target_type\":\"schedule\",\"target_id\":\"${SCHEDULE_ID}\"}" >/dev/null
-ok "Target: Primary On-Call schedule (aru-jo)"
+ok "Target: Primary On-Call schedule (demo user)"
 
 # --- Create service + integration key -----------------------------------------
 log "Creating service..."
@@ -238,7 +219,8 @@ echo "  PageFire UI:     http://localhost:${PAGEFIRE_PORT}"
 echo "  Fake App:        http://localhost:${MYAPP_PORT}"
 echo "  Notifications:   http://localhost:${NOTIFY_PORT}"
 echo ""
-echo "  You are logged in as aru-jo and ON-CALL."
+echo "  Log in as: ${DEMO_EMAIL} / ${DEMO_PASSWORD}"
+echo "  ${DEMO_NAME} is ON-CALL."
 echo ""
 echo "  To trigger an alert:"
 echo "    kill \$(lsof -ti:${MYAPP_PORT})"
