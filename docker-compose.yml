@@ -1,0 +1,41 @@
+services:
+  pagefire:
+    build: .
+    # Or use a pre-built image:
+    # image: ghcr.io/pagefire/pagefire:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - pagefire-data:/data
+    environment:
+      # --- Core ---
+      PAGEFIRE_PORT: "3000"
+      PAGEFIRE_DATA_DIR: "/data"
+      PAGEFIRE_LOG_LEVEL: "info"
+      # PAGEFIRE_DATABASE_DRIVER: "sqlite"          # "sqlite" (default) or "postgres"
+      # PAGEFIRE_DATABASE_URL: ""                    # Postgres DSN if using postgres driver
+
+      # --- Engine ---
+      # PAGEFIRE_ENGINE_INTERVAL_SECONDS: "5"       # How often the engine processes alerts
+
+      # --- SMTP (for email notifications) ---
+      # PAGEFIRE_SMTP_HOST: "smtp.example.com"
+      # PAGEFIRE_SMTP_PORT: "587"
+      # PAGEFIRE_SMTP_FROM: "pagefire@example.com"
+      # PAGEFIRE_SMTP_USERNAME: ""
+      # PAGEFIRE_SMTP_PASSWORD: ""
+
+      # --- Slack ---
+      # PAGEFIRE_SLACK_BOT_TOKEN: "xoxb-..."
+
+      # --- Twilio (for SMS/voice notifications) ---
+      # PAGEFIRE_TWILIO_ACCOUNT_SID: ""
+      # PAGEFIRE_TWILIO_AUTH_TOKEN: ""
+      # PAGEFIRE_TWILIO_FROM_NUMBER: "+1..."
+
+      # --- Security ---
+      # PAGEFIRE_ALLOW_PRIVATE_WEBHOOKS: "false"    # Allow webhooks to private/localhost IPs
+    restart: unless-stopped
+
+volumes:
+  pagefire-data:

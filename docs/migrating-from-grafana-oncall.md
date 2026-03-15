@@ -1,8 +1,10 @@
 # Migrating from Grafana OnCall to PageFire
 
-Grafana OnCall OSS enters maintenance mode and will be archived on March 24, 2026. Cloud Connection (free SMS, phone, mobile push) shuts down the same day. If you're looking for a self-hosted alternative, PageFire covers the core on-call workflow in a single Go binary with zero external dependencies.
+Welcome. If you're here because Grafana OnCall OSS is being archived on March 24, 2026, you're in the right place. Cloud Connection (free SMS, phone, mobile push) shuts down the same day, and the project will no longer receive updates.
 
-This guide maps OnCall concepts to PageFire equivalents and walks you through recreating your setup.
+PageFire is a self-hosted, open-source alternative that covers the core on-call workflow — scheduling, escalations, alerting, and incident management — in a single Go binary with zero external dependencies. No Grafana plugin, no Redis, no RabbitMQ. SMS and phone call notifications are built in via Twilio.
+
+This guide maps OnCall concepts to PageFire equivalents and walks you through recreating your setup. Most teams can complete the migration in under 30 minutes.
 
 ## Concept Mapping
 
@@ -22,35 +24,39 @@ This guide maps OnCall concepts to PageFire equivalents and walks you through re
 | Resolution Note | Alert Log | Audit trail entries on alerts |
 | Outgoing Webhook | Webhook contact method | Event-driven outgoing webhooks are on the roadmap |
 | Team | Team | Create teams and manage membership via API |
+| Incident | Incident | Track multi-service outages with timeline updates and severity levels |
 
 ## Prerequisites
 
-- Go 1.22+ (to build from source) or a [pre-built binary](https://github.com/pagefire/pagefire/releases)
-- ~5 minutes
+- Docker (recommended) or Go 1.22+ (to build from source) or a [pre-built binary](https://github.com/pagefire/pagefire/releases)
+- ~30 minutes for a full migration
 
 ## Step 1: Start PageFire
 
-Download the latest release for your platform, or build from source:
+The fastest way to get running is Docker Compose:
+
+```bash
+git clone https://github.com/pagefire/pagefire.git
+cd pagefire
+docker compose up -d
+```
+
+This starts PageFire on port 3000 with a persistent data volume. See [docs/docker.md](docker.md) for production configuration, including how to set environment variables for SMTP, Twilio, and Slack.
+
+Alternatively, download a binary or build from source:
 
 ```bash
 # Option A: Download binary (example for Linux amd64)
 curl -LO https://github.com/pagefire/pagefire/releases/latest/download/pagefire-linux-amd64
 chmod +x pagefire-linux-amd64
 mv pagefire-linux-amd64 /usr/local/bin/pagefire
+pagefire serve
 
 # Option B: Build from source
 git clone https://github.com/pagefire/pagefire.git
 cd pagefire
 make build
-
-# Option C: Docker
-docker run -d -p 3000:3000 ghcr.io/pagefire/pagefire:latest
-```
-
-Start the server:
-
-```bash
-pagefire serve
+./bin/pagefire serve
 ```
 
 PageFire uses SQLite by default. Your database is created automatically at `./pagefire.db`.
@@ -129,14 +135,14 @@ curl -s -X POST "$API/users/$USER_ID/notification-rules" \
 
 | OnCall Channel | PageFire Equivalent |
 |---|---|
-| Slack DM | `webhook` pointed at a Slack incoming webhook URL |
-| Email | `email` (requires SMTP config — see below) |
-| SMS | `webhook` pointed at a Twilio API endpoint or similar |
-| Phone call | Not yet supported |
+| Slack DM | `slack_dm` (native — set `PAGEFIRE_SLACK_BOT_TOKEN`) |
+| Email | `email` (native — requires SMTP config) |
+| SMS | `sms` (native — requires Twilio config, see [Twilio setup guide](twilio-setup.md)) |
+| Phone call | `phone` (native — requires Twilio config, see [Twilio setup guide](twilio-setup.md)) |
 | Telegram | `webhook` pointed at Telegram bot API |
 | Mobile push | `webhook` pointed at Pushover/ntfy/Gotify |
 
-> **Note:** OnCall's Cloud Connection (which provided free SMS/phone/push) shuts down on March 24, 2026. If you were self-hosting Twilio for SMS, you can continue using it via a webhook contact method in PageFire.
+> **Note:** OnCall's Cloud Connection (which provided free SMS/phone/push) shuts down on March 24, 2026. PageFire has native SMS and phone call support via Twilio — no third-party relay needed. See the [Twilio setup guide](twilio-setup.md) to configure it.
 
 ## Step 4: Create an Escalation Policy
 
@@ -331,6 +337,7 @@ curl -s "$API/alerts" \
 - Overrides let you temporarily swap who's on-call
 - Deduplication prevents duplicate alerts from the same source
 - Escalation policies loop through steps and repeat
+- Incidents can track multi-service outages with timeline updates
 
 ### Things that work differently
 - **No Grafana dependency:** PageFire is standalone. No Grafana plugin needed.
@@ -338,20 +345,35 @@ curl -s "$API/alerts" \
 - **Built-in web UI:** Full dashboard for managing alerts, services, schedules, teams, and users.
 - **Per-user auth:** Email/password login with session cookies. Per-user API tokens (prefixed `pf_`) for scripts. Admin and member roles with RBAC enforcement.
 - **User invite flow:** Admins create users and share an invite link. Users set their own passwords — admins never handle credentials.
+- **Native SMS and phone calls:** Built-in Twilio integration — no Cloud Connection or external relay.
 
-### Features on the roadmap
-- Event-driven outgoing webhooks
-- Alert template customization
-- ICS/iCal schedule export
-- Uptime monitoring (HTTP/TCP/ping health checks)
-- Public status pages
+## What's Not Supported Yet
+
+PageFire focuses on on-call management today. The following features are on the roadmap but not yet available:
+
+| Feature | Status | Notes |
+|---|---|---|
+| Uptime monitoring (HTTP/TCP/ping) | Planned | Health-check based monitoring is next after on-call |
+| Public status pages | Planned | Hosted and self-hosted status pages |
+| Event-driven outgoing webhooks | Planned | Trigger webhooks on alert lifecycle events |
+| Alert template customization | Planned | Customize notification content per service |
+| ICS/iCal schedule export | Planned | Export schedules to calendar apps |
+| Terraform provider | Planned | Manage configuration as code |
+| Mobile app | Not planned yet | Use webhook notifications to Pushover/ntfy as a workaround |
+| Slack channel notifications | Not planned yet | Escalation steps can target users only, not channels |
+
+If any of these are critical for your migration, [open an issue](https://github.com/pagefire/pagefire/issues) — it helps us prioritize.
 
 ## Configuration Reference
+
+All configuration is via environment variables. See [docs/docker.md](docker.md) for Docker Compose examples.
 
 | Variable | Default | Description |
 |---|---|---|
 | `PAGEFIRE_PORT` | `3000` | HTTP listen port |
-| `PAGEFIRE_DATABASE_URL` | `./pagefire.db` | SQLite database path |
+| `PAGEFIRE_DATABASE_DRIVER` | `sqlite` | Database driver (`sqlite`; Postgres planned) |
+| `PAGEFIRE_DATABASE_URL` | `./pagefire.db` | Database connection string |
+| `PAGEFIRE_DATA_DIR` | `.` | Data directory for SQLite |
 | `PAGEFIRE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `PAGEFIRE_ENGINE_INTERVAL_SECONDS` | `5` | How often the engine processes alerts |
 | `PAGEFIRE_SMTP_HOST` | — | SMTP server for email notifications |
@@ -359,10 +381,17 @@ curl -s "$API/alerts" \
 | `PAGEFIRE_SMTP_FROM` | — | Sender email address |
 | `PAGEFIRE_SMTP_USERNAME` | — | SMTP auth username |
 | `PAGEFIRE_SMTP_PASSWORD` | — | SMTP auth password |
+| `PAGEFIRE_TWILIO_ACCOUNT_SID` | — | Twilio account SID (enables SMS and phone) |
+| `PAGEFIRE_TWILIO_AUTH_TOKEN` | — | Twilio auth token |
+| `PAGEFIRE_TWILIO_FROM_NUMBER` | — | Twilio phone number in E.164 format (e.g. `+12025551234`) |
 | `PAGEFIRE_SLACK_BOT_TOKEN` | — | Slack bot token for DM notifications |
 | `PAGEFIRE_ALLOW_PRIVATE_WEBHOOKS` | `false` | Allow webhooks to private/localhost IPs |
 
 ## Getting Help
 
+If you run into issues during migration, we want to hear about it:
+
 - GitHub: [github.com/pagefire/pagefire](https://github.com/pagefire/pagefire)
 - Issues: [github.com/pagefire/pagefire/issues](https://github.com/pagefire/pagefire/issues)
+
+If you're coming from Grafana OnCall and there's a feature gap that blocks your migration, please open an issue with the `grafana-oncall-migration` label. These get priority attention.

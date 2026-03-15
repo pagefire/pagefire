@@ -17,9 +17,11 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /pagefire /usr/local/bin/pagefire
 
-RUN useradd -r -s /bin/false pagefire
+RUN useradd -r -s /bin/false pagefire && mkdir -p /data && chown pagefire:pagefire /data
 USER pagefire
 
+ENV PAGEFIRE_DATA_DIR=/data
+VOLUME /data
 EXPOSE 3000
 ENTRYPOINT ["pagefire"]
 CMD ["serve"]

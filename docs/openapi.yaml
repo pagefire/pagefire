@@ -1,0 +1,2983 @@
+openapi: 3.0.3
+info:
+  title: PageFire API
+  version: 0.3.0
+  description: |
+    PageFire is a unified monitoring and incident management platform.
+    Single Go binary, self-hosted, MIT license.
+
+    Authentication is via cookie-based sessions (login endpoint) or
+    Bearer API tokens (created via the tokens endpoint). Admin-only
+    write operations are enforced on users, teams, services, escalation
+    policies, and schedules.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  contact:
+    url: https://pagefire.dev
+
+servers:
+  - url: /api/v1
+    description: Default API base path
+
+tags:
+  - name: Health
+    description: Health check (no auth required)
+  - name: Auth
+    description: Authentication, sessions, setup, invites, API tokens
+  - name: Users
+    description: User management, contact methods, notification rules (admin writes)
+  - name: Teams
+    description: Team management and membership (admin writes)
+  - name: Services
+    description: Services, integration keys, routing rules (admin writes)
+  - name: Escalation Policies
+    description: Escalation policies, steps, and targets (admin writes)
+  - name: Schedules
+    description: On-call schedules, rotations, participants, overrides (admin writes)
+  - name: Alerts
+    description: Alert lifecycle — create, acknowledge, resolve, logs
+  - name: Incidents
+    description: Incident management — create, update, link alerts/services
+  - name: On-Call
+    description: Resolve who is currently on-call for a schedule
+  - name: Integrations
+    description: Inbound webhooks (generic, Grafana, Prometheus) — authenticated by integration key
+  - name: Schedule Overrides
+    description: Schedule overrides accessible to all authenticated users
+
+security:
+  - cookieAuth: []
+  - bearerAuth: []
+
+paths:
+  # ──────────────────────────── Health ────────────────────────────
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [Health]
+      summary: Health check
+      description: Returns server and database health status. No authentication required.
+      security: []
+      servers:
+        - url: /
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  db:
+                    type: string
+                    example: ok
+        "503":
+          description: Degraded — database unreachable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: degraded
+                  db:
+                    type: string
+
+  # ──────────────────────────── Auth ────────────────────────────
+  /auth/login:
+    post:
+      operationId: login
+      tags: [Auth]
+      summary: Log in with email and password
+      description: Creates a server-side session and sets a session cookie. Rate-limited to 10 requests per minute.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [Auth]
+      summary: Log out and destroy session
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      tags: [Auth]
+      summary: Get the currently authenticated user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/setup:
+    get:
+      operationId: setupCheck
+      tags: [Auth]
+      summary: Check if initial setup is required
+      description: Returns whether any users exist. If none, setup is required.
+      security: []
+      responses:
+        "200":
+          description: Setup status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  setup_required:
+                    type: boolean
+    post:
+      operationId: setup
+      tags: [Auth]
+      summary: Create the first admin user
+      description: Only works when no users exist. Creates the first admin and auto-logs in.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+      responses:
+        "201":
+          description: Admin created and logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: Setup already completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/password:
+    put:
+      operationId: changePassword
+      tags: [Auth]
+      summary: Change the current user's password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                  format: password
+                new_password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/invite/{token}:
+    get:
+      operationId: inviteCheck
+      tags: [Auth]
+      summary: Validate an invite token
+      description: Returns the invited user's name and email if the token is valid.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Valid invite
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  email:
+                    type: string
+        "404":
+          description: Invalid or expired invite
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: Invite already used or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: inviteAccept
+      tags: [Auth]
+      summary: Accept an invite and set password
+      description: Sets the invited user's password and auto-logs in.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Password set and logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: Invalid invite
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: Invite already used or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/tokens:
+    post:
+      operationId: createAPIToken
+      tags: [Auth]
+      summary: Create a new API token
+      description: Returns the raw token value once. Store it securely — it cannot be retrieved again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        "201":
+          description: Token created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: Raw token (shown once)
+                  id:
+                    type: string
+                  name:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    get:
+      operationId: listAPITokens
+      tags: [Auth]
+      summary: List all API tokens for the current user
+      responses:
+        "200":
+          description: Token list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/APIToken"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /auth/tokens/{id}:
+    delete:
+      operationId: revokeAPIToken
+      tags: [Auth]
+      summary: Revoke an API token
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Token revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ──────────────────────────── Users ────────────────────────────
+  /users:
+    post:
+      operationId: createUser
+      tags: [Users]
+      summary: Create a new user (admin only)
+      description: |
+        If no password is provided, an invite token is generated and returned as invite_url.
+        Only admins can set role to "admin".
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateUserResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      operationId: listUsers
+      tags: [Users]
+      summary: List all users
+      responses:
+        "200":
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+
+  /users/{id}:
+    get:
+      operationId: getUser
+      tags: [Users]
+      summary: Get a user by ID
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateUser
+      tags: [Users]
+      summary: Update a user (admin only)
+      description: Role changes are not allowed via this endpoint; role is preserved from existing record.
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteUser
+      tags: [Users]
+      summary: Delete a user (admin only)
+      description: Cannot delete your own account.
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "204":
+          description: User deleted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/{id}/contact-methods:
+    get:
+      operationId: listContactMethods
+      tags: [Users]
+      summary: List contact methods for a user
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Contact method list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ContactMethod"
+    post:
+      operationId: createContactMethod
+      tags: [Users]
+      summary: Create a contact method for a user (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateContactMethodRequest"
+      responses:
+        "201":
+          description: Contact method created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactMethod"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /users/{id}/contact-methods/{cmID}:
+    delete:
+      operationId: deleteContactMethod
+      tags: [Users]
+      summary: Delete a contact method (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: cmID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Contact method deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /users/{id}/notification-rules:
+    get:
+      operationId: listNotificationRules
+      tags: [Users]
+      summary: List notification rules for a user
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Notification rule list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NotificationRule"
+    post:
+      operationId: createNotificationRule
+      tags: [Users]
+      summary: Create a notification rule for a user (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNotificationRuleRequest"
+      responses:
+        "201":
+          description: Notification rule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationRule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /users/{id}/notification-rules/{ruleID}:
+    delete:
+      operationId: deleteNotificationRule
+      tags: [Users]
+      summary: Delete a notification rule (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: ruleID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Notification rule deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ──────────────────────────── Teams ────────────────────────────
+  /teams:
+    post:
+      operationId: createTeam
+      tags: [Teams]
+      summary: Create a new team (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTeamRequest"
+      responses:
+        "201":
+          description: Team created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      operationId: listTeams
+      tags: [Teams]
+      summary: List all teams
+      responses:
+        "200":
+          description: Team list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Team"
+
+  /teams/{id}:
+    get:
+      operationId: getTeam
+      tags: [Teams]
+      summary: Get a team by ID
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Team found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateTeam
+      tags: [Teams]
+      summary: Update a team (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTeamRequest"
+      responses:
+        "200":
+          description: Team updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Team"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteTeam
+      tags: [Teams]
+      summary: Delete a team (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "204":
+          description: Team deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /teams/{id}/members:
+    get:
+      operationId: listTeamMembers
+      tags: [Teams]
+      summary: List members of a team
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Member list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TeamMember"
+    post:
+      operationId: addTeamMember
+      tags: [Teams]
+      summary: Add a member to a team (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddTeamMemberRequest"
+      responses:
+        "201":
+          description: Member added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamMember"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /teams/{id}/members/{userID}:
+    delete:
+      operationId: removeTeamMember
+      tags: [Teams]
+      summary: Remove a member from a team (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: userID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Member removed
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ──────────────────────────── Services ────────────────────────────
+  /services:
+    post:
+      operationId: createService
+      tags: [Services]
+      summary: Create a new service (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateServiceRequest"
+      responses:
+        "201":
+          description: Service created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      operationId: listServices
+      tags: [Services]
+      summary: List all services
+      parameters:
+        - name: team_id
+          in: query
+          description: Filter services by team ID
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Service list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Service"
+
+  /services/{id}:
+    get:
+      operationId: getService
+      tags: [Services]
+      summary: Get a service by ID
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Service found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateService
+      tags: [Services]
+      summary: Update a service (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateServiceRequest"
+      responses:
+        "200":
+          description: Service updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteService
+      tags: [Services]
+      summary: Delete a service (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "204":
+          description: Service deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /services/{id}/integration-keys:
+    get:
+      operationId: listIntegrationKeys
+      tags: [Services]
+      summary: List integration keys for a service
+      description: Secrets are masked in list responses (only a prefix is shown).
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Integration key list (secrets masked)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IntegrationKeyMasked"
+    post:
+      operationId: createIntegrationKey
+      tags: [Services]
+      summary: Create an integration key for a service (admin only)
+      description: The full secret is returned only on creation. Store it securely.
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIntegrationKeyRequest"
+      responses:
+        "201":
+          description: Integration key created (full secret returned once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationKey"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /services/{id}/integration-keys/{keyID}:
+    delete:
+      operationId: deleteIntegrationKey
+      tags: [Services]
+      summary: Delete an integration key (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: keyID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Integration key deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /services/{id}/integration-keys/{keyID}/test:
+    post:
+      operationId: testIntegrationKey
+      tags: [Services]
+      summary: Send a test alert through an integration key (admin only)
+      description: Creates a real test alert that flows through the escalation pipeline.
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: keyID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Test alert created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /services/{id}/routing-rules:
+    get:
+      operationId: listRoutingRules
+      tags: [Services]
+      summary: List routing rules for a service
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Routing rule list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RoutingRule"
+    post:
+      operationId: createRoutingRule
+      tags: [Services]
+      summary: Create a routing rule for a service (admin only)
+      description: |
+        Rules are evaluated in priority order. The first match determines which
+        escalation policy is used. If no rule matches, the service's default
+        escalation_policy_id is used.
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoutingRuleRequest"
+      responses:
+        "201":
+          description: Routing rule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingRule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /services/{id}/routing-rules/{ruleID}:
+    delete:
+      operationId: deleteRoutingRule
+      tags: [Services]
+      summary: Delete a routing rule (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: ruleID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Routing rule deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ──────────────────────────── Escalation Policies ────────────────────────────
+  /escalation-policies:
+    post:
+      operationId: createEscalationPolicy
+      tags: [Escalation Policies]
+      summary: Create an escalation policy (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEscalationPolicyRequest"
+      responses:
+        "201":
+          description: Escalation policy created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EscalationPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      operationId: listEscalationPolicies
+      tags: [Escalation Policies]
+      summary: List all escalation policies
+      parameters:
+        - name: team_id
+          in: query
+          description: Filter by team ID
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Escalation policy list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EscalationPolicy"
+
+  /escalation-policies/{id}:
+    get:
+      operationId: getEscalationPolicy
+      tags: [Escalation Policies]
+      summary: Get an escalation policy by ID
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Escalation policy found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EscalationPolicy"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateEscalationPolicy
+      tags: [Escalation Policies]
+      summary: Update an escalation policy (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEscalationPolicyRequest"
+      responses:
+        "200":
+          description: Escalation policy updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EscalationPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteEscalationPolicy
+      tags: [Escalation Policies]
+      summary: Delete an escalation policy (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "204":
+          description: Escalation policy deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /escalation-policies/{id}/steps:
+    get:
+      operationId: listEscalationSteps
+      tags: [Escalation Policies]
+      summary: List steps in an escalation policy
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Step list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EscalationStep"
+    post:
+      operationId: createEscalationStep
+      tags: [Escalation Policies]
+      summary: Add a step to an escalation policy (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEscalationStepRequest"
+      responses:
+        "201":
+          description: Step created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EscalationStep"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /escalation-policies/{id}/steps/{stepID}:
+    delete:
+      operationId: deleteEscalationStep
+      tags: [Escalation Policies]
+      summary: Delete an escalation step (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: stepID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Step deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /escalation-policies/{id}/steps/{stepID}/targets:
+    get:
+      operationId: listEscalationStepTargets
+      tags: [Escalation Policies]
+      summary: List targets for an escalation step
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: stepID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Target list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EscalationStepTarget"
+    post:
+      operationId: createEscalationStepTarget
+      tags: [Escalation Policies]
+      summary: Add a target to an escalation step (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: stepID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEscalationStepTargetRequest"
+      responses:
+        "201":
+          description: Target created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EscalationStepTarget"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /escalation-policies/{id}/steps/{stepID}/targets/{targetID}:
+    delete:
+      operationId: deleteEscalationStepTarget
+      tags: [Escalation Policies]
+      summary: Delete an escalation step target (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: stepID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: targetID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Target deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ──────────────────────────── Schedules ────────────────────────────
+  /schedules:
+    post:
+      operationId: createSchedule
+      tags: [Schedules]
+      summary: Create a schedule (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateScheduleRequest"
+      responses:
+        "201":
+          description: Schedule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      operationId: listSchedules
+      tags: [Schedules]
+      summary: List all schedules
+      parameters:
+        - name: team_id
+          in: query
+          description: Filter by team ID
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Schedule list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Schedule"
+
+  /schedules/{id}:
+    get:
+      operationId: getSchedule
+      tags: [Schedules]
+      summary: Get a schedule by ID
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Schedule found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateSchedule
+      tags: [Schedules]
+      summary: Update a schedule (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateScheduleRequest"
+      responses:
+        "200":
+          description: Schedule updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteSchedule
+      tags: [Schedules]
+      summary: Delete a schedule (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "204":
+          description: Schedule deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /schedules/{id}/rotations:
+    get:
+      operationId: listRotations
+      tags: [Schedules]
+      summary: List rotations in a schedule
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Rotation list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Rotation"
+    post:
+      operationId: createRotation
+      tags: [Schedules]
+      summary: Create a rotation in a schedule (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRotationRequest"
+      responses:
+        "201":
+          description: Rotation created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rotation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /schedules/{id}/rotations/{rotID}:
+    delete:
+      operationId: deleteRotation
+      tags: [Schedules]
+      summary: Delete a rotation (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: rotID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Rotation deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /schedules/{id}/rotations/{rotID}/participants:
+    get:
+      operationId: listRotationParticipants
+      tags: [Schedules]
+      summary: List participants in a rotation
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: rotID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Participant list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RotationParticipant"
+    post:
+      operationId: createRotationParticipant
+      tags: [Schedules]
+      summary: Add a participant to a rotation (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: rotID
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRotationParticipantRequest"
+      responses:
+        "201":
+          description: Participant added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RotationParticipant"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /schedules/{id}/rotations/{rotID}/participants/{partID}:
+    delete:
+      operationId: deleteRotationParticipant
+      tags: [Schedules]
+      summary: Remove a participant from a rotation (admin only)
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: rotID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: partID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Participant removed
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /schedules/{id}/overrides:
+    get:
+      operationId: listScheduleOverridesAdmin
+      tags: [Schedules]
+      summary: List overrides for a schedule (via admin-gated schedules mount)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Override list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScheduleOverride"
+    post:
+      operationId: createScheduleOverrideAdmin
+      tags: [Schedules]
+      summary: Create a schedule override (via admin-gated schedules mount)
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateScheduleOverrideRequest"
+      responses:
+        "201":
+          description: Override created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleOverride"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /schedules/{id}/overrides/{overrideID}:
+    delete:
+      operationId: deleteScheduleOverrideAdmin
+      tags: [Schedules]
+      summary: Delete a schedule override (via admin-gated schedules mount)
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: overrideID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Override deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ──────────────────────────── Schedule Overrides (all users) ────────────────────────────
+  /schedule-overrides/{id}/overrides:
+    get:
+      operationId: listScheduleOverrides
+      tags: [Schedule Overrides]
+      summary: List overrides for a schedule
+      description: Accessible to all authenticated users (not just admins).
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Override list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScheduleOverride"
+    post:
+      operationId: createScheduleOverride
+      tags: [Schedule Overrides]
+      summary: Create a schedule override
+      description: Any authenticated user can create overrides (e.g., on-call swaps).
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateScheduleOverrideRequest"
+      responses:
+        "201":
+          description: Override created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleOverride"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /schedule-overrides/{id}/overrides/{overrideID}:
+    delete:
+      operationId: deleteScheduleOverride
+      tags: [Schedule Overrides]
+      summary: Delete a schedule override
+      description: Any authenticated user can delete overrides.
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: overrideID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Override deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ──────────────────────────── Alerts ────────────────────────────
+  /alerts:
+    post:
+      operationId: createAlert
+      tags: [Alerts]
+      summary: Create a new alert
+      description: Triggers the escalation pipeline for the specified service.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAlertRequest"
+      responses:
+        "201":
+          description: Alert created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          description: Service not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      operationId: listAlerts
+      tags: [Alerts]
+      summary: List alerts with filtering and pagination
+      parameters:
+        - name: status
+          in: query
+          description: "Filter by status: triggered, acknowledged, resolved"
+          schema:
+            type: string
+            enum: [triggered, acknowledged, resolved]
+        - name: service_id
+          in: query
+          description: Filter by service ID
+          schema:
+            type: string
+        - name: group_key
+          in: query
+          description: Filter by group key
+          schema:
+            type: string
+        - name: source
+          in: query
+          description: "Filter by source: api, integration, monitor, test"
+          schema:
+            type: string
+        - name: search
+          in: query
+          description: Full-text search in summary (max 200 chars)
+          schema:
+            type: string
+            maxLength: 200
+        - name: created_after
+          in: query
+          description: Filter alerts created after this time (RFC3339)
+          schema:
+            type: string
+            format: date-time
+        - name: created_before
+          in: query
+          description: Filter alerts created before this time (RFC3339)
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          description: Maximum number of results (default 50, max 200)
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          description: Offset for pagination
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Alert list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Alert"
+
+  /alerts/{id}:
+    get:
+      operationId: getAlert
+      tags: [Alerts]
+      summary: Get an alert by ID
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Alert found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /alerts/{id}/acknowledge:
+    post:
+      operationId: acknowledgeAlert
+      tags: [Alerts]
+      summary: Acknowledge an alert
+      description: Stops escalation. user_id is optional — defaults to the authenticated user.
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id:
+                  type: string
+                  description: User acknowledging (defaults to session user)
+      responses:
+        "200":
+          description: Alert acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /alerts/{id}/resolve:
+    post:
+      operationId: resolveAlert
+      tags: [Alerts]
+      summary: Resolve an alert
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Alert resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /alerts/{id}/logs:
+    get:
+      operationId: listAlertLogs
+      tags: [Alerts]
+      summary: List audit log entries for an alert
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Alert log list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AlertLog"
+
+  /alerts/{id}/incident:
+    get:
+      operationId: getIncidentForAlert
+      tags: [Alerts]
+      summary: Get the incident linked to an alert
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Linked incident
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Incident"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "501":
+          description: Incident linking not available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ──────────────────────────── Incidents ────────────────────────────
+  /incidents:
+    post:
+      operationId: createIncident
+      tags: [Incidents]
+      summary: Create a new incident
+      description: Defaults to status "triggered", severity "critical", source "manual".
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIncidentRequest"
+      responses:
+        "201":
+          description: Incident created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Incident"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      operationId: listIncidents
+      tags: [Incidents]
+      summary: List incidents with filtering and pagination
+      parameters:
+        - name: status
+          in: query
+          description: "Filter by status"
+          schema:
+            type: string
+            enum: [triggered, acknowledged, investigating, identified, monitoring, resolved]
+        - name: search
+          in: query
+          description: Full-text search in title (max 200 chars)
+          schema:
+            type: string
+            maxLength: 200
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 200
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Incident list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Incident"
+
+  /incidents/{id}:
+    get:
+      operationId: getIncident
+      tags: [Incidents]
+      summary: Get an incident by ID
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Incident found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Incident"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateIncident
+      tags: [Incidents]
+      summary: Update an incident
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateIncidentRequest"
+      responses:
+        "200":
+          description: Incident updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Incident"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /incidents/{id}/updates:
+    get:
+      operationId: listIncidentUpdates
+      tags: [Incidents]
+      summary: List timeline updates for an incident
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Update list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IncidentUpdate"
+    post:
+      operationId: createIncidentUpdate
+      tags: [Incidents]
+      summary: Post a timeline update to an incident
+      description: If a status is included, the incident status is also updated.
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIncidentUpdateRequest"
+      responses:
+        "201":
+          description: Update created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncidentUpdate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /incidents/{id}/services:
+    get:
+      operationId: listIncidentServices
+      tags: [Incidents]
+      summary: List services linked to an incident
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Service ID list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+    post:
+      operationId: addIncidentService
+      tags: [Incidents]
+      summary: Link a service to an incident
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service_id]
+              properties:
+                service_id:
+                  type: string
+      responses:
+        "204":
+          description: Service linked
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /incidents/{id}/alerts:
+    get:
+      operationId: listIncidentAlerts
+      tags: [Incidents]
+      summary: List alerts linked to an incident
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200":
+          description: Linked alert list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Alert"
+    post:
+      operationId: linkAlertToIncident
+      tags: [Incidents]
+      summary: Link an alert to an incident
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [alert_id]
+              properties:
+                alert_id:
+                  type: string
+      responses:
+        "204":
+          description: Alert linked
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /incidents/{id}/alerts/{alertID}:
+    delete:
+      operationId: unlinkAlertFromIncident
+      tags: [Incidents]
+      summary: Unlink an alert from an incident
+      parameters:
+        - $ref: "#/components/parameters/id"
+        - name: alertID
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Alert unlinked
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ──────────────────────────── On-Call ────────────────────────────
+  /oncall/{scheduleID}:
+    get:
+      operationId: whosOnCall
+      tags: [On-Call]
+      summary: Resolve who is on-call for a schedule
+      description: Returns the list of users currently on-call, accounting for rotations and overrides.
+      parameters:
+        - name: scheduleID
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: at
+          in: query
+          description: Point in time to resolve (RFC3339). Defaults to now.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: On-call users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ──────────────────────────── Integrations ────────────────────────────
+  /integrations/{key}/alerts:
+    post:
+      operationId: genericWebhook
+      tags: [Integrations]
+      summary: Generic inbound webhook
+      description: |
+        Accepts alert payloads and creates alerts for the service associated with
+        the integration key. Authenticated by the key secret in the URL path.
+        Rate-limited to 60 requests per minute.
+      security: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: Integration key secret
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericWebhookRequest"
+      responses:
+        "201":
+          description: Alert created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "200":
+          description: Deduplicated — existing alert returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Invalid integration key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /integrations/{key}/grafana:
+    post:
+      operationId: grafanaWebhook
+      tags: [Integrations]
+      summary: Grafana webhook receiver
+      description: |
+        Accepts Grafana alerting webhook payloads. "ok" state alerts are
+        silently acknowledged. Rate-limited to 60 requests per minute.
+      security: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: Integration key secret
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GrafanaWebhookRequest"
+      responses:
+        "201":
+          description: Alert created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "200":
+          description: Resolved state acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "401":
+          description: Invalid integration key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /integrations/{key}/prometheus:
+    post:
+      operationId: prometheusWebhook
+      tags: [Integrations]
+      summary: Prometheus Alertmanager webhook receiver
+      description: |
+        Accepts Prometheus Alertmanager webhook payloads. Resolved alerts are
+        skipped. Rate-limited to 60 requests per minute.
+      security: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: Integration key secret
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrometheusWebhookRequest"
+      responses:
+        "200":
+          description: Alerts processed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Invalid integration key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: pagefire_session
+      description: Server-side session cookie set by POST /auth/login
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: API token created via POST /auth/tokens
+
+  parameters:
+    id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    StatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+
+    # ── Users ──
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [admin, user]
+        timezone:
+          type: string
+          example: America/New_York
+        avatar_url:
+          type: string
+        auth_provider:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        last_login:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, name, email, role, timezone, is_active, created_at]
+
+    CreateUserRequest:
+      type: object
+      required: [name, email]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        timezone:
+          type: string
+          default: UTC
+        role:
+          type: string
+          enum: [admin, user]
+          default: user
+        password:
+          type: string
+          format: password
+          description: If omitted, an invite token is generated instead.
+
+    CreateUserResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+        timezone:
+          type: string
+        invite_url:
+          type: string
+          description: Present only when no password was provided.
+
+    UserUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        timezone:
+          type: string
+        avatar_url:
+          type: string
+
+    # ── API Tokens ──
+    APIToken:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+      required: [id, user_id, name, prefix, created_at]
+
+    # ── Contact Methods ──
+    ContactMethod:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        type:
+          type: string
+          enum: [email, sms, phone, slack_dm, webhook]
+        value:
+          type: string
+        verified:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+      required: [id, user_id, type, value, verified, created_at]
+
+    CreateContactMethodRequest:
+      type: object
+      required: [type, value]
+      properties:
+        type:
+          type: string
+          enum: [email, sms, phone, slack_dm, webhook]
+        value:
+          type: string
+          description: "Email address, E.164 phone number, Slack user ID, or webhook URL"
+
+    # ── Notification Rules ──
+    NotificationRule:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        contact_method_id:
+          type: string
+        delay_minutes:
+          type: integer
+          minimum: 0
+      required: [id, user_id, contact_method_id, delay_minutes]
+
+    CreateNotificationRuleRequest:
+      type: object
+      required: [contact_method_id]
+      properties:
+        contact_method_id:
+          type: string
+        delay_minutes:
+          type: integer
+          minimum: 0
+          default: 0
+
+    # ── Teams ──
+    Team:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required: [id, name, created_at]
+
+    CreateTeamRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    TeamMember:
+      type: object
+      properties:
+        team_id:
+          type: string
+        user_id:
+          type: string
+        role:
+          type: string
+          enum: [admin, member]
+      required: [team_id, user_id, role]
+
+    AddTeamMemberRequest:
+      type: object
+      required: [user_id]
+      properties:
+        user_id:
+          type: string
+        role:
+          type: string
+          enum: [admin, member]
+          default: member
+
+    # ── Services ──
+    Service:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        escalation_policy_id:
+          type: string
+        team_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, name, escalation_policy_id, created_at]
+
+    CreateServiceRequest:
+      type: object
+      required: [name, escalation_policy_id]
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 2000
+        escalation_policy_id:
+          type: string
+        team_id:
+          type: string
+
+    # ── Integration Keys ──
+    IntegrationKey:
+      type: object
+      properties:
+        id:
+          type: string
+        service_id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [generic, grafana, prometheus]
+        secret:
+          type: string
+          description: Full secret (only returned on creation)
+        created_at:
+          type: string
+          format: date-time
+      required: [id, service_id, name, type, secret, created_at]
+
+    IntegrationKeyMasked:
+      type: object
+      properties:
+        id:
+          type: string
+        service_id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [generic, grafana, prometheus]
+        secret_prefix:
+          type: string
+          description: Masked secret (last 4 chars visible)
+        created_at:
+          type: string
+      required: [id, service_id, name, type, secret_prefix, created_at]
+
+    CreateIntegrationKeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [generic, grafana, prometheus]
+          default: generic
+
+    # ── Routing Rules ──
+    RoutingRule:
+      type: object
+      properties:
+        id:
+          type: string
+        service_id:
+          type: string
+        priority:
+          type: integer
+        condition_field:
+          type: string
+          enum: [summary, details, source]
+        condition_match_type:
+          type: string
+          enum: [contains, regex]
+        condition_value:
+          type: string
+          maxLength: 200
+        escalation_policy_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required: [id, service_id, priority, condition_field, condition_match_type, condition_value, escalation_policy_id, created_at]
+
+    CreateRoutingRuleRequest:
+      type: object
+      required: [condition_field, condition_match_type, condition_value, escalation_policy_id]
+      properties:
+        priority:
+          type: integer
+        condition_field:
+          type: string
+          enum: [summary, details, source]
+        condition_match_type:
+          type: string
+          enum: [contains, regex]
+        condition_value:
+          type: string
+          maxLength: 200
+        escalation_policy_id:
+          type: string
+
+    # ── Escalation Policies ──
+    EscalationPolicy:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        repeat:
+          type: integer
+          minimum: 0
+          maximum: 5
+        team_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, name, repeat, created_at]
+
+    CreateEscalationPolicyRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        repeat:
+          type: integer
+          minimum: 0
+          maximum: 5
+          default: 0
+        team_id:
+          type: string
+
+    EscalationStep:
+      type: object
+      properties:
+        id:
+          type: string
+        escalation_policy_id:
+          type: string
+        step_number:
+          type: integer
+        delay_minutes:
+          type: integer
+          minimum: 0
+      required: [id, escalation_policy_id, step_number, delay_minutes]
+
+    CreateEscalationStepRequest:
+      type: object
+      properties:
+        step_number:
+          type: integer
+        delay_minutes:
+          type: integer
+          minimum: 0
+          default: 0
+
+    EscalationStepTarget:
+      type: object
+      properties:
+        id:
+          type: string
+        escalation_step_id:
+          type: string
+        target_type:
+          type: string
+          enum: [user, schedule]
+        target_id:
+          type: string
+      required: [id, escalation_step_id, target_type, target_id]
+
+    CreateEscalationStepTargetRequest:
+      type: object
+      required: [target_type, target_id]
+      properties:
+        target_type:
+          type: string
+          enum: [user, schedule]
+        target_id:
+          type: string
+
+    # ── Schedules ──
+    Schedule:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        timezone:
+          type: string
+        team_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, name, timezone, created_at]
+
+    CreateScheduleRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        timezone:
+          type: string
+          default: UTC
+        team_id:
+          type: string
+
+    Rotation:
+      type: object
+      properties:
+        id:
+          type: string
+        schedule_id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [daily, weekly, custom]
+        shift_length:
+          type: integer
+          minimum: 1
+        start_time:
+          type: string
+          format: date-time
+        handoff_time:
+          type: string
+          example: "09:00"
+        created_at:
+          type: string
+          format: date-time
+      required: [id, schedule_id, name, type, shift_length, start_time, handoff_time, created_at]
+
+    CreateRotationRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [daily, weekly, custom]
+          default: weekly
+        shift_length:
+          type: integer
+          minimum: 1
+          default: 1
+        start_time:
+          type: string
+          format: date-time
+        handoff_time:
+          type: string
+          example: "09:00"
+
+    RotationParticipant:
+      type: object
+      properties:
+        id:
+          type: string
+        rotation_id:
+          type: string
+        user_id:
+          type: string
+        position:
+          type: integer
+      required: [id, rotation_id, user_id, position]
+
+    CreateRotationParticipantRequest:
+      type: object
+      required: [user_id]
+      properties:
+        user_id:
+          type: string
+        position:
+          type: integer
+
+    ScheduleOverride:
+      type: object
+      properties:
+        id:
+          type: string
+        schedule_id:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        replace_user:
+          type: string
+        override_user:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required: [id, schedule_id, start_time, end_time, replace_user, override_user, created_at]
+
+    CreateScheduleOverrideRequest:
+      type: object
+      required: [start_time, end_time, replace_user, override_user]
+      properties:
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        replace_user:
+          type: string
+        override_user:
+          type: string
+
+    # ── Alerts ──
+    Alert:
+      type: object
+      properties:
+        id:
+          type: string
+        service_id:
+          type: string
+        status:
+          type: string
+          enum: [triggered, acknowledged, resolved]
+        summary:
+          type: string
+          maxLength: 500
+        details:
+          type: string
+          maxLength: 10000
+        source:
+          type: string
+          enum: [api, integration, monitor, test]
+        dedup_key:
+          type: string
+        group_key:
+          type: string
+        escalation_policy_snapshot:
+          type: string
+          description: JSON-encoded snapshot of the escalation policy at alert creation time
+        escalation_step:
+          type: integer
+        loop_count:
+          type: integer
+        next_escalation_at:
+          type: string
+          format: date-time
+          nullable: true
+        acknowledged_by:
+          type: string
+          nullable: true
+        acknowledged_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, service_id, status, summary, source, escalation_step, loop_count, created_at]
+
+    CreateAlertRequest:
+      type: object
+      required: [service_id, summary]
+      properties:
+        service_id:
+          type: string
+        summary:
+          type: string
+          maxLength: 500
+        details:
+          type: string
+          maxLength: 10000
+        dedup_key:
+          type: string
+        group_key:
+          type: string
+
+    AlertLog:
+      type: object
+      properties:
+        id:
+          type: string
+        alert_id:
+          type: string
+        event:
+          type: string
+          enum: [created, escalated, acknowledged, resolved]
+        message:
+          type: string
+        user_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, alert_id, event, message, created_at]
+
+    # ── Incidents ──
+    Incident:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+          maxLength: 500
+        status:
+          type: string
+          enum: [triggered, acknowledged, investigating, identified, monitoring, resolved]
+        severity:
+          type: string
+          enum: [critical, major, minor]
+        summary:
+          type: string
+          maxLength: 10000
+        source:
+          type: string
+          enum: [manual, alert, monitor]
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+      required: [id, title, status, severity, source, created_at]
+
+    CreateIncidentRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          maxLength: 500
+        status:
+          type: string
+          enum: [triggered, acknowledged, investigating, identified, monitoring, resolved]
+          default: triggered
+        severity:
+          type: string
+          enum: [critical, major, minor]
+          default: critical
+        summary:
+          type: string
+          maxLength: 10000
+        source:
+          type: string
+          default: manual
+
+    UpdateIncidentRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 500
+        status:
+          type: string
+          enum: [triggered, acknowledged, investigating, identified, monitoring, resolved]
+        severity:
+          type: string
+          enum: [critical, major, minor]
+        summary:
+          type: string
+          maxLength: 10000
+
+    IncidentUpdate:
+      type: object
+      properties:
+        id:
+          type: string
+        incident_id:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+        created_by:
+          type: string
+        created_by_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required: [id, incident_id, message, created_at]
+
+    CreateIncidentUpdateRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+        status:
+          type: string
+          enum: [triggered, acknowledged, investigating, identified, monitoring, resolved]
+          description: If set, the incident status is also updated to this value.
+
+    # ── Integration Webhooks ──
+    GenericWebhookRequest:
+      type: object
+      required: [summary]
+      properties:
+        summary:
+          type: string
+          maxLength: 500
+        details:
+          type: string
+          maxLength: 10000
+        dedup_key:
+          type: string
+        group_key:
+          type: string
+
+    GrafanaWebhookRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        message:
+          type: string
+        ruleId:
+          type: string
+        state:
+          type: string
+          description: '"ok" state alerts are silently resolved'
+
+    PrometheusWebhookRequest:
+      type: object
+      properties:
+        alerts:
+          type: array
+          items:
+            type: object
+            properties:
+              status:
+                type: string
+                enum: [firing, resolved]
+              labels:
+                type: object
+                additionalProperties:
+                  type: string
+              annotations:
+                type: object
+                additionalProperties:
+                  type: string
+              fingerprint:
+                type: string

@@ -18,22 +18,13 @@ type SQLiteStore struct {
 }
 
 // New opens a SQLite database and configures WAL mode and foreign keys.
+// Pragmas are set via DSN parameters so they apply to every connection
+// in the pool, not just the first one (fixes SQLITE_BUSY under concurrency).
 func New(dbPath string) (*SQLiteStore, error) {
-	db, err := sql.Open("sqlite", dbPath)
+	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening sqlite: %w", err)
-	}
-
-	// SQLite pragmas for performance and correctness
-	pragmas := []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA foreign_keys=ON",
-		"PRAGMA busy_timeout=5000",
-	}
-	for _, p := range pragmas {
-		if _, err := db.Exec(p); err != nil {
-			return nil, fmt.Errorf("setting pragma %q: %w", p, err)
-		}
 	}
 
 	return &SQLiteStore{db: db}, nil
