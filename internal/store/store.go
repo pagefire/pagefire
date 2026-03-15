@@ -29,8 +29,14 @@ type Store interface {
 	Schedules() ScheduleStore
 
 	// Lifecycle
+	Ping(ctx context.Context) error
 	Migrate(ctx context.Context) error
 	Close() error
+
+	// Cleanup — bulk purge of old data
+	PurgeResolvedAlerts(ctx context.Context, olderThan time.Time) (int64, error)
+	PurgeOldNotifications(ctx context.Context, olderThan time.Time) (int64, error)
+	PurgeExpiredOverrides(ctx context.Context) (int64, error)
 }
 
 // TeamStore manages teams and team membership.
@@ -90,6 +96,7 @@ type ServiceStore interface {
 	Delete(ctx context.Context, id string) error
 
 	CreateIntegrationKey(ctx context.Context, ik *IntegrationKey) error
+	GetIntegrationKey(ctx context.Context, id string) (*IntegrationKey, error)
 	ListIntegrationKeys(ctx context.Context, serviceID string) ([]IntegrationKey, error)
 	GetIntegrationKeyBySecret(ctx context.Context, secret string) (*IntegrationKey, error)
 	DeleteIntegrationKey(ctx context.Context, id string) error
@@ -180,6 +187,11 @@ type IncidentStore interface {
 
 	AddService(ctx context.Context, incidentID, serviceID string) error
 	ListServices(ctx context.Context, incidentID string) ([]string, error)
+
+	LinkAlert(ctx context.Context, incidentID, alertID string) error
+	UnlinkAlert(ctx context.Context, incidentID, alertID string) error
+	ListAlerts(ctx context.Context, incidentID string) ([]*Alert, error)
+	GetIncidentForAlert(ctx context.Context, alertID string) (*Incident, error)
 
 	CreateUpdate(ctx context.Context, u *IncidentUpdate) error
 	ListUpdates(ctx context.Context, incidentID string) ([]IncidentUpdate, error)

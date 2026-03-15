@@ -39,6 +39,10 @@ func New(dbPath string) (*SQLiteStore, error) {
 	return &SQLiteStore{db: db}, nil
 }
 
+func (s *SQLiteStore) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
+}
+
 func (s *SQLiteStore) Migrate(ctx context.Context) error {
 	goose.SetBaseFS(migrations.SQLiteMigrations)
 	if err := goose.SetDialect("sqlite3"); err != nil {

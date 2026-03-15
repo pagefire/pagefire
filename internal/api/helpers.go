@@ -3,11 +3,14 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/mail"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/pagefire/pagefire/internal/store"
 )
@@ -27,6 +30,10 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
+	ct := r.Header.Get("Content-Type")
+	if !strings.Contains(ct, "application/json") {
+		return fmt.Errorf("Content-Type must be application/json")
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 	dec := json.NewDecoder(r.Body)
 	return dec.Decode(v)
@@ -109,4 +116,27 @@ var validRoles = map[string]bool{
 // validateRole checks if a role is in the allowed set.
 func validateRole(role string) bool {
 	return validRoles[role]
+}
+
+// validatePassword checks password complexity: min 8 chars, at least one
+// uppercase letter, one lowercase letter, and one digit.
+func validatePassword(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("password must be at least 8 characters and contain uppercase, lowercase, and a digit")
+	}
+	var hasUpper, hasLower, hasDigit bool
+	for _, c := range password {
+		switch {
+		case unicode.IsUpper(c):
+			hasUpper = true
+		case unicode.IsLower(c):
+			hasLower = true
+		case unicode.IsDigit(c):
+			hasDigit = true
+		}
+	}
+	if !hasUpper || !hasLower || !hasDigit {
+		return fmt.Errorf("password must be at least 8 characters and contain uppercase, lowercase, and a digit")
+	}
+	return nil
 }

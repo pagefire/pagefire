@@ -61,9 +61,11 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid email address")
 		return
 	}
-	if req.Password != "" && len(req.Password) < 8 {
-		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
-		return
+	if req.Password != "" {
+		if err := validatePassword(req.Password); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	role := store.RoleUser

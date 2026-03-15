@@ -1022,3 +1022,111 @@ a:hover { text-decoration: underline; }
   border-radius: 50%;
   animation: pulse 2s infinite;
 }
+
+/* === Linked Alerts (Incident Detail) === */
+.linked-alerts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.linked-alert-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.linked-alert-item:last-child { border-bottom: none; }
+
+.linked-alert-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.linked-alert-summary {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.linked-alert-summary:hover { text-decoration: underline; }
+
+.linked-alert-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.btn-unlink {
+  flex-shrink: 0;
+  font-size: 18px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius);
+}
+
+.btn-unlink:hover {
+  color: var(--red);
+  background: var(--bg-hover);
+}
+
+/* Alert search in link modal */
+.alert-search-results {
+  margin-top: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.alert-search-item {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+
+.alert-search-item:hover { background: var(--bg-hover); }
+
+.alert-search-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.alert-search-summary {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.alert-search-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Linked incident on alert detail */
+.linked-incident-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.linked-incident-link:hover { text-decoration: underline; }

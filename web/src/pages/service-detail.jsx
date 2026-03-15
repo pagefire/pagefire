@@ -42,6 +42,9 @@ export function ServiceDetail({ id }) {
   const [newKeySecret, setNewKeySecret] = useState(null)
   const [deleteKey, setDeleteKey] = useState(null)
 
+  // Test integration key state
+  const [testingKeyId, setTestingKeyId] = useState(null)
+
   // Routing rule state
   const [ruleModalOpen, setRuleModalOpen] = useState(false)
   const [ruleForm, setRuleForm] = useState({ condition_field: 'summary', condition_match_type: 'contains', condition_value: '', escalation_policy_id: '' })
@@ -80,6 +83,17 @@ export function ServiceDetail({ id }) {
       refetchKeys()
     }
     setDeleteKey(null)
+  }
+
+  const handleTestKey = async (keyId) => {
+    setTestingKeyId(keyId)
+    const { error } = await apiPost(`/services/${id}/integration-keys/${keyId}/test`, {})
+    if (error) {
+      toast.error('Test alert failed: ' + error)
+    } else {
+      toast.success('Test alert created successfully')
+    }
+    setTestingKeyId(null)
   }
 
   // Routing rule handlers
@@ -163,6 +177,14 @@ export function ServiceDetail({ id }) {
                   </div>
                   <div class="sub-list-actions">
                     <span class="mono text-muted">{k.secret_prefix || '****'}</span>
+                    <button
+                      class="btn btn-secondary btn-sm"
+                      onClick={() => handleTestKey(k.id)}
+                      disabled={testingKeyId === k.id}
+                      title="Send test alert"
+                    >
+                      {testingKeyId === k.id ? 'Sending...' : 'Test'}
+                    </button>
                     {isAdmin && <button class="btn-icon btn-icon-danger" onClick={() => setDeleteKey(k)} title="Delete">&times;</button>}
                   </div>
                 </div>

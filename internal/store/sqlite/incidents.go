@@ -137,6 +137,81 @@ func (s *incidentStore) ListServices(ctx context.Context, incidentID string) ([]
 	return serviceIDs, rows.Err()
 }
 
+func (s *incidentStore) LinkAlert(ctx context.Context, incidentID, alertID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO incident_alerts (incident_id, alert_id) VALUES (?, ?)`,
+		incidentID, alertID,
+	)
+	return err
+}
+
+func (s *incidentStore) UnlinkAlert(ctx context.Context, incidentID, alertID string) error {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM incident_alerts WHERE incident_id = ? AND alert_id = ?`,
+		incidentID, alertID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *incidentStore) ListAlerts(ctx context.Context, incidentID string) ([]*store.Alert, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT a.id, a.service_id, a.status, a.summary, a.details, a.source,
+		        a.dedup_key, a.group_key, a.escalation_policy_snapshot,
+		        a.escalation_step, a.loop_count, a.next_escalation_at,
+		        a.acknowledged_by, a.acknowledged_at, a.resolved_at, a.created_at
+		 FROM alerts a
+		 INNER JOIN incident_alerts ia ON ia.alert_id = a.id
+		 WHERE ia.incident_id = ?
+		 ORDER BY a.created_at DESC`, incidentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var alerts []*store.Alert
+	for rows.Next() {
+		a := &store.Alert{}
+		if err := rows.Scan(
+			&a.ID, &a.ServiceID, &a.Status, &a.Summary, &a.Details, &a.Source,
+			&a.DeduplicationKey, &a.GroupKey, &a.EscalationPolicySnapshot,
+			&a.EscalationStep, &a.LoopCount, &a.NextEscalationAt,
+			&a.AcknowledgedBy, &a.AcknowledgedAt, &a.ResolvedAt, &a.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		alerts = append(alerts, a)
+	}
+	return alerts, rows.Err()
+}
+
+func (s *incidentStore) GetIncidentForAlert(ctx context.Context, alertID string) (*store.Incident, error) {
+	inc := &store.Incident{}
+	var createdBy sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT i.id, i.title, i.status, i.severity, i.summary, i.source, i.created_by, i.created_at, i.resolved_at
+		 FROM incidents i
+		 INNER JOIN incident_alerts ia ON ia.incident_id = i.id
+		 WHERE ia.alert_id = ?
+		 LIMIT 1`, alertID,
+	).Scan(&inc.ID, &inc.Title, &inc.Status, &inc.Severity, &inc.Summary, &inc.Source, &createdBy, &inc.CreatedAt, &inc.ResolvedAt)
+	if err == sql.ErrNoRows {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	inc.CreatedBy = fromNullString(createdBy)
+	return inc, nil
+}
+
 func (s *incidentStore) CreateUpdate(ctx context.Context, u *store.IncidentUpdate) error {
 	if u.ID == "" {
 		u.ID = uuid.NewString()

@@ -9,6 +9,7 @@ export function AlertDetail({ id }) {
   const { data: alert, loading, refetch } = useApi(`/alerts/${id}`)
   const { data: logs, refetch: refetchLogs } = useApi(`/alerts/${id}/logs`)
   const { data: services } = useApi('/services')
+  const { data: linkedIncident, error: incidentError } = useApi(`/alerts/${id}/incident`)
   const { user: currentUser } = useAuth()
   const [acting, setActing] = useState(false)
   const [actionError, setActionError] = useState(null)
@@ -95,6 +96,17 @@ export function AlertDetail({ id }) {
               <TimeAgo time={alert.resolved_at} />
             </div>
           )}
+
+          {linkedIncident && !incidentError && (
+            <div class="detail-row">
+              <span class="detail-label">Incident</span>
+              <a href={`/incidents/${linkedIncident.id}`} class="linked-incident-link">
+                <StatusBadge status={linkedIncident.severity} />
+                <span>{linkedIncident.title}</span>
+              </a>
+            </div>
+          )}
+
           {alert.details && (
             <div class="detail-block">
               <span class="detail-label">Details</span>

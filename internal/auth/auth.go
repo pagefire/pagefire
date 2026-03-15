@@ -32,6 +32,7 @@ func NewService(users store.UserStore, db *sql.DB) *Service {
 	sm := scs.New()
 	sm.Store = sqlite3store.New(db)
 	sm.Lifetime = 24 * time.Hour
+	sm.IdleTimeout = 2 * time.Hour
 	sm.Cookie.Name = "pagefire_session"
 	sm.Cookie.HttpOnly = true
 	sm.Cookie.SameSite = 3 // Lax

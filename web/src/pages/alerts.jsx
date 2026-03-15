@@ -17,6 +17,9 @@ export function Alerts() {
   const [tab, setTab] = useState('triggered')
   const [search, setSearch] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [source, setSource] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [alerts, setAlerts] = useState(null)
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(0)
@@ -28,19 +31,27 @@ export function Alerts() {
   }, [search])
 
   // Reset page when filters change
-  useEffect(() => { setPage(0) }, [tab, debouncedSearch])
+  useEffect(() => { setPage(0) }, [tab, debouncedSearch, source, dateFrom, dateTo])
 
   const fetchAlerts = useCallback(async () => {
     setLoading(true)
     const params = new URLSearchParams()
     if (tab) params.set('status', tab)
     if (debouncedSearch) params.set('search', debouncedSearch)
+    if (source) params.set('source', source)
+    if (dateFrom) params.set('created_after', new Date(dateFrom).toISOString())
+    if (dateTo) {
+      // Set to end of the selected day
+      const end = new Date(dateTo)
+      end.setHours(23, 59, 59, 999)
+      params.set('created_before', end.toISOString())
+    }
     params.set('limit', PAGE_SIZE + 1) // fetch one extra to detect next page
     params.set('offset', page * PAGE_SIZE)
     const { data } = await apiGet(`/alerts?${params}`)
     setAlerts(data || [])
     setLoading(false)
-  }, [tab, debouncedSearch, page])
+  }, [tab, debouncedSearch, source, dateFrom, dateTo, page])
 
   useEffect(() => { fetchAlerts() }, [fetchAlerts])
 
@@ -75,6 +86,49 @@ export function Alerts() {
           value={search}
           onInput={(e) => setSearch(e.target.value)}
         />
+      </div>
+
+      <div class="list-toolbar" style="gap: 0.5rem; flex-wrap: wrap;">
+        <select
+          class="form-input"
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          style="max-width: 160px;"
+        >
+          <option value="">All sources</option>
+          <option value="api">API</option>
+          <option value="email">Email</option>
+          <option value="webhook">Webhook</option>
+          <option value="monitor">Monitor</option>
+        </select>
+        <label class="filter-label" style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.85rem; color: var(--text-secondary, #888);">
+          From
+          <input
+            class="form-input"
+            type="date"
+            value={dateFrom}
+            onInput={(e) => setDateFrom(e.target.value)}
+            style="max-width: 160px;"
+          />
+        </label>
+        <label class="filter-label" style="display: flex; align-items: center; gap: 0.25rem; font-size: 0.85rem; color: var(--text-secondary, #888);">
+          To
+          <input
+            class="form-input"
+            type="date"
+            value={dateTo}
+            onInput={(e) => setDateTo(e.target.value)}
+            style="max-width: 160px;"
+          />
+        </label>
+        {(source || dateFrom || dateTo) && (
+          <button
+            class="btn btn-secondary btn-sm"
+            onClick={() => { setSource(''); setDateFrom(''); setDateTo('') }}
+          >
+            Clear filters
+          </button>
+        )}
       </div>
 
       {loading ? (

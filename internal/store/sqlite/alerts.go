@@ -107,10 +107,22 @@ func (s *alertStore) List(ctx context.Context, filter store.AlertFilter) ([]stor
 		query += ` AND group_key = ?`
 		args = append(args, filter.GroupKey)
 	}
+	if filter.Source != "" {
+		query += ` AND source = ?`
+		args = append(args, filter.Source)
+	}
 	if filter.Search != "" {
 		query += ` AND (summary LIKE ? OR details LIKE ? OR source LIKE ?)`
 		like := "%" + filter.Search + "%"
 		args = append(args, like, like, like)
+	}
+	if filter.CreatedAfter != nil {
+		query += ` AND created_at >= ?`
+		args = append(args, filter.CreatedAfter.UTC())
+	}
+	if filter.CreatedBefore != nil {
+		query += ` AND created_at <= ?`
+		args = append(args, filter.CreatedBefore.UTC())
 	}
 
 	query += ` ORDER BY created_at DESC`

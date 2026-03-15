@@ -28,9 +28,19 @@ func NewRouter(s store.Store, resolver *oncall.Resolver, dispatcher *notificatio
 	// Session middleware (loads/saves session data on every request)
 	r.Use(authSvc.SessionManager().LoadAndSave)
 
-	// Health check (no auth)
+	// Health check (no auth) — includes DB connectivity
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		if err := s.Ping(r.Context()); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"status": "degraded",
+				"db":     err.Error(),
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status": "ok",
+			"db":     "ok",
+		})
 	})
 
 	// Auth endpoints (single mount — public + protected routes handled internally)
@@ -59,13 +69,13 @@ func NewRouter(s store.Store, resolver *oncall.Resolver, dispatcher *notificatio
 				r.Use(RequireAdminForWrites)
 				r.Mount("/users", NewUserHandler(s.Users()).Routes())
 				r.Mount("/teams", NewTeamHandler(s.Teams()).Routes())
-				r.Mount("/services", NewServiceHandler(s.Services()).Routes())
+				r.Mount("/services", NewServiceHandler(s.Services(), s.Alerts(), s.EscalationPolicies()).Routes())
 				r.Mount("/escalation-policies", NewEscalationPolicyHandler(s.EscalationPolicies()).Routes())
 				r.Mount("/schedules", scheduleHandler.Routes())
 			})
 
 			// All authenticated users: alerts, incidents, on-call, schedule overrides
-			r.Mount("/alerts", NewAlertHandler(s.Alerts(), s.Services(), s.EscalationPolicies()).Routes())
+			r.Mount("/alerts", NewAlertHandler(s.Alerts(), s.Services(), s.EscalationPolicies(), s.Incidents()).Routes())
 			r.Mount("/incidents", NewIncidentHandler(s.Incidents()).Routes())
 			r.Mount("/oncall", NewOnCallHandler(resolver).Routes())
 			r.Mount("/schedule-overrides", scheduleHandler.OverrideRoutes())

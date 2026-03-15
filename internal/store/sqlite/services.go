@@ -115,6 +115,17 @@ func (s *serviceStore) CreateIntegrationKey(ctx context.Context, ik *store.Integ
 	return err
 }
 
+func (s *serviceStore) GetIntegrationKey(ctx context.Context, id string) (*store.IntegrationKey, error) {
+	ik := &store.IntegrationKey{}
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, service_id, name, type, secret, created_at FROM integration_keys WHERE id = ?`, id,
+	).Scan(&ik.ID, &ik.ServiceID, &ik.Name, &ik.Type, &ik.Secret, &ik.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, store.ErrNotFound
+	}
+	return ik, err
+}
+
 func (s *serviceStore) ListIntegrationKeys(ctx context.Context, serviceID string) ([]store.IntegrationKey, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, service_id, name, type, secret, created_at FROM integration_keys WHERE service_id = ?`, serviceID,

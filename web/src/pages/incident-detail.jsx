@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks'
 import { useApi } from '../hooks.js'
-import { apiPost, apiPut } from '../api.js'
+import { apiPost, apiPut, apiDelete, apiGet } from '../api.js'
 import { useAuth } from '../auth.jsx'
 import { StatusBadge } from '../components/status-badge.jsx'
 import { TimeAgo } from '../components/time-ago.jsx'
@@ -10,6 +10,7 @@ const STATUS_FLOW = ['investigating', 'identified', 'monitoring', 'resolved']
 export function IncidentDetail({ id }) {
   const { data: incident, loading, refetch } = useApi(`/incidents/${id}`)
   const { data: updates, refetch: refetchUpdates } = useApi(`/incidents/${id}/updates`)
+  const { data: linkedAlerts, refetch: refetchAlerts } = useApi(`/incidents/${id}/alerts`)
   const { user } = useAuth()
   const [note, setNote] = useState('')
   const [posting, setPosting] = useState(false)
@@ -17,6 +18,10 @@ export function IncidentDetail({ id }) {
   const [summaryDraft, setSummaryDraft] = useState('')
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
+  const [showLinkModal, setShowLinkModal] = useState(false)
+  const [alertSearch, setAlertSearch] = useState('')
+  const [alertResults, setAlertResults] = useState([])
+  const [searchingAlerts, setSearchingAlerts] = useState(false)
 
   const changeStatus = async (newStatus) => {
     setPosting(true)
@@ -72,6 +77,41 @@ export function IncidentDetail({ id }) {
   const handleTitleKeyDown = (e) => {
     if (e.key === 'Enter') saveTitle()
     if (e.key === 'Escape') setEditingTitle(false)
+  }
+
+  const openLinkModal = async () => {
+    setShowLinkModal(true)
+    setAlertSearch('')
+    setAlertResults([])
+    await searchAlerts('')
+  }
+
+  const searchAlerts = async (query) => {
+    setSearchingAlerts(true)
+    const params = query ? `?search=${encodeURIComponent(query)}&limit=20` : '?limit=20'
+    const { data } = await apiGet(`/alerts${params}`)
+    // Filter out already linked alerts
+    const linkedIds = new Set((linkedAlerts || []).map(a => a.id))
+    setAlertResults((data || []).filter(a => !linkedIds.has(a.id)))
+    setSearchingAlerts(false)
+  }
+
+  const handleAlertSearchInput = async (e) => {
+    const val = e.target.value
+    setAlertSearch(val)
+    await searchAlerts(val)
+  }
+
+  const linkAlert = async (alertID) => {
+    await apiPost(`/incidents/${id}/alerts`, { alert_id: alertID })
+    await refetchAlerts()
+    // Remove from search results
+    setAlertResults(prev => prev.filter(a => a.id !== alertID))
+  }
+
+  const unlinkAlert = async (alertID) => {
+    await apiDelete(`/incidents/${id}/alerts/${alertID}`)
+    await refetchAlerts()
   }
 
   if (loading) return <div class="loading">Loading...</div>
@@ -166,6 +206,78 @@ export function IncidentDetail({ id }) {
               <pre class="detail-pre">{incident.summary || 'No summary yet'}</pre>
             )}
           </div>
+        </div>
+
+        <div class="detail-card">
+          <div class="detail-label-row">
+            <h3>Alerts</h3>
+            <button class="btn btn-secondary btn-sm" onClick={openLinkModal}>Link Alert</button>
+          </div>
+
+          {linkedAlerts && linkedAlerts.length > 0 ? (
+            <div class="linked-alerts-list">
+              {linkedAlerts.map(alert => (
+                <div key={alert.id} class="linked-alert-item">
+                  <div class="linked-alert-info">
+                    <a href={`/alerts/${alert.id}`} class="linked-alert-summary">{alert.summary}</a>
+                    <div class="linked-alert-meta">
+                      <StatusBadge status={alert.status} />
+                      <TimeAgo time={alert.created_at} />
+                    </div>
+                  </div>
+                  <button
+                    class="btn-icon btn-unlink"
+                    onClick={() => unlinkAlert(alert.id)}
+                    title="Unlink alert"
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p class="text-muted">No alerts linked</p>
+          )}
+
+          {showLinkModal && (
+            <div class="modal-overlay" onClick={() => setShowLinkModal(false)}>
+              <div class="modal" onClick={(e) => e.stopPropagation()}>
+                <div class="modal-header">
+                  <h3>Link Alert</h3>
+                  <button class="btn-icon" onClick={() => setShowLinkModal(false)}>&times;</button>
+                </div>
+                <div class="modal-body">
+                  <input
+                    class="form-input"
+                    type="text"
+                    placeholder="Search alerts..."
+                    value={alertSearch}
+                    onInput={handleAlertSearchInput}
+                    autoFocus
+                  />
+                  <div class="alert-search-results">
+                    {searchingAlerts ? (
+                      <p class="text-muted">Searching...</p>
+                    ) : alertResults.length > 0 ? (
+                      alertResults.map(alert => (
+                        <div key={alert.id} class="alert-search-item" onClick={() => linkAlert(alert.id)}>
+                          <div class="alert-search-info">
+                            <span class="alert-search-summary">{alert.summary}</span>
+                            <div class="alert-search-meta">
+                              <StatusBadge status={alert.status} />
+                              <TimeAgo time={alert.created_at} />
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p class="text-muted">No alerts found</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div class="detail-card">

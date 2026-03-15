@@ -25,6 +25,9 @@ func (h *IncidentHandler) Routes() chi.Router {
 	r.Get("/{id}/updates", h.listUpdates)
 	r.Post("/{id}/services", h.addService)
 	r.Get("/{id}/services", h.listServices)
+	r.Post("/{id}/alerts", h.linkAlert)
+	r.Get("/{id}/alerts", h.listAlerts)
+	r.Delete("/{id}/alerts/{alertID}", h.unlinkAlert)
 	return r
 }
 
@@ -183,4 +186,45 @@ func (h *IncidentHandler) listServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, ids)
+}
+
+func (h *IncidentHandler) linkAlert(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AlertID string `json:"alert_id"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.AlertID == "" {
+		writeError(w, http.StatusBadRequest, "alert_id is required")
+		return
+	}
+	if err := h.incidents.LinkAlert(r.Context(), chi.URLParam(r, "id"), req.AlertID); err != nil {
+		handleStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *IncidentHandler) unlinkAlert(w http.ResponseWriter, r *http.Request) {
+	incidentID := chi.URLParam(r, "id")
+	alertID := chi.URLParam(r, "alertID")
+	if err := h.incidents.UnlinkAlert(r.Context(), incidentID, alertID); err != nil {
+		handleStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *IncidentHandler) listAlerts(w http.ResponseWriter, r *http.Request) {
+	alerts, err := h.incidents.ListAlerts(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		handleStoreError(w, err)
+		return
+	}
+	if alerts == nil {
+		alerts = []*store.Alert{}
+	}
+	writeJSON(w, http.StatusOK, alerts)
 }

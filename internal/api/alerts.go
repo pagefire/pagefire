@@ -13,10 +13,15 @@ type AlertHandler struct {
 	alerts     store.AlertStore
 	services   store.ServiceStore
 	escalation store.EscalationPolicyStore
+	incidents  store.IncidentStore
 }
 
-func NewAlertHandler(alerts store.AlertStore, services store.ServiceStore, escalation store.EscalationPolicyStore) *AlertHandler {
-	return &AlertHandler{alerts: alerts, services: services, escalation: escalation}
+func NewAlertHandler(alerts store.AlertStore, services store.ServiceStore, escalation store.EscalationPolicyStore, incidents ...store.IncidentStore) *AlertHandler {
+	h := &AlertHandler{alerts: alerts, services: services, escalation: escalation}
+	if len(incidents) > 0 {
+		h.incidents = incidents[0]
+	}
+	return h
 }
 
 func (h *AlertHandler) Routes() chi.Router {
@@ -27,6 +32,7 @@ func (h *AlertHandler) Routes() chi.Router {
 	r.Post("/{id}/acknowledge", h.acknowledge)
 	r.Post("/{id}/resolve", h.resolve)
 	r.Get("/{id}/logs", h.listLogs)
+	r.Get("/{id}/incident", h.getIncidentForAlert)
 	return r
 }
 
@@ -120,9 +126,27 @@ func (h *AlertHandler) list(w http.ResponseWriter, r *http.Request) {
 		Status:    r.URL.Query().Get("status"),
 		ServiceID: r.URL.Query().Get("service_id"),
 		GroupKey:  r.URL.Query().Get("group_key"),
+		Source:    r.URL.Query().Get("source"),
 		Search:    search,
 		Limit:     limit,
 		Offset:    offset,
+	}
+
+	if v := r.URL.Query().Get("created_after"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			filter.CreatedAfter = &t
+		} else {
+			writeError(w, http.StatusBadRequest, "created_after must be RFC3339 format")
+			return
+		}
+	}
+	if v := r.URL.Query().Get("created_before"); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			filter.CreatedBefore = &t
+		} else {
+			writeError(w, http.StatusBadRequest, "created_before must be RFC3339 format")
+			return
+		}
 	}
 
 	alerts, err := h.alerts.List(r.Context(), filter)
@@ -190,4 +214,17 @@ func (h *AlertHandler) listLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, logs)
+}
+
+func (h *AlertHandler) getIncidentForAlert(w http.ResponseWriter, r *http.Request) {
+	if h.incidents == nil {
+		writeError(w, http.StatusNotImplemented, "incident linking not available")
+		return
+	}
+	inc, err := h.incidents.GetIncidentForAlert(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		handleStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, inc)
 }

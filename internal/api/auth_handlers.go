@@ -127,8 +127,8 @@ func (h *AuthHandler) setup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid email address")
 		return
 	}
-	if len(req.Password) < 8 {
-		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if err := validatePassword(req.Password); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -181,8 +181,8 @@ func (h *AuthHandler) changePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "current_password and new_password required")
 		return
 	}
-	if len(req.NewPassword) < 8 {
-		writeError(w, http.StatusBadRequest, "new password must be at least 8 characters")
+	if err := validatePassword(req.NewPassword); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -328,8 +328,8 @@ func (h *AuthHandler) inviteAccept(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if len(req.Password) < 8 {
-		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if err := validatePassword(req.Password); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

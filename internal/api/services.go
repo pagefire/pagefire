@@ -1,19 +1,23 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/pagefire/pagefire/internal/store"
 )
 
 type ServiceHandler struct {
-	services store.ServiceStore
+	services   store.ServiceStore
+	alerts     store.AlertStore
+	escalation store.EscalationPolicyStore
 }
 
-func NewServiceHandler(services store.ServiceStore) *ServiceHandler {
-	return &ServiceHandler{services: services}
+func NewServiceHandler(services store.ServiceStore, alerts store.AlertStore, escalation store.EscalationPolicyStore) *ServiceHandler {
+	return &ServiceHandler{services: services, alerts: alerts, escalation: escalation}
 }
 
 func (h *ServiceHandler) Routes() chi.Router {
@@ -27,6 +31,7 @@ func (h *ServiceHandler) Routes() chi.Router {
 	r.Get("/{id}/integration-keys", h.listIntegrationKeys)
 	r.Post("/{id}/integration-keys", h.createIntegrationKey)
 	r.Delete("/{id}/integration-keys/{keyID}", h.deleteIntegrationKey)
+	r.Post("/{id}/integration-keys/{keyID}/test", h.testIntegrationKey)
 
 	r.Get("/{id}/routing-rules", h.listRoutingRules)
 	r.Post("/{id}/routing-rules", h.createRoutingRule)
@@ -174,6 +179,70 @@ func (h *ServiceHandler) deleteIntegrationKey(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Test integration key ---
+
+func (h *ServiceHandler) testIntegrationKey(w http.ResponseWriter, r *http.Request) {
+	serviceID := chi.URLParam(r, "id")
+	keyID := chi.URLParam(r, "keyID")
+
+	// Verify integration key exists and belongs to this service.
+	ik, err := h.services.GetIntegrationKey(r.Context(), keyID)
+	if err != nil {
+		handleStoreError(w, err)
+		return
+	}
+	if ik.ServiceID != serviceID {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	// Look up the service to get its default escalation policy.
+	svc, err := h.services.Get(r.Context(), serviceID)
+	if err != nil {
+		handleStoreError(w, err)
+		return
+	}
+
+	// Evaluate routing rules (same as real integration pipeline).
+	summary := "Test alert from PageFire"
+	details := "This is a test alert to verify your integration is working."
+	source := "test"
+
+	rules, _ := h.services.ListRoutingRules(r.Context(), svc.ID)
+	epID := routeAlert(svc, rules, summary, details, source)
+
+	snapshot, err := h.escalation.GetFullPolicy(r.Context(), epID)
+	if err != nil {
+		handleStoreError(w, err)
+		return
+	}
+	snapshotJSON, _ := json.Marshal(snapshot)
+
+	now := time.Now()
+	alert := &store.Alert{
+		ServiceID:                svc.ID,
+		Status:                   store.AlertStatusTriggered,
+		Summary:                  summary,
+		Details:                  details,
+		Source:                   source,
+		EscalationPolicySnapshot: string(snapshotJSON),
+		NextEscalationAt:         &now,
+	}
+
+	if err := h.alerts.Create(r.Context(), alert); err != nil {
+		handleStoreError(w, err)
+		return
+	}
+
+	h.alerts.CreateLog(r.Context(), &store.AlertLog{
+		AlertID: alert.ID,
+		Event:   "created",
+		Message: "Test alert created via " + ik.Name + " integration key",
+	})
+
+	writeJSON(w, http.StatusCreated, alert)
 }
 
 // --- Routing rules ---

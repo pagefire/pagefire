@@ -280,6 +280,12 @@ type IncidentService struct {
 	ServiceID  string `json:"service_id"`
 }
 
+// IncidentAlert links an incident to an alert.
+type IncidentAlert struct {
+	IncidentID string `json:"incident_id"`
+	AlertID    string `json:"alert_id"`
+}
+
 // IncidentUpdate is a timeline entry on an incident.
 type IncidentUpdate struct {
 	ID            string    `json:"id"`
@@ -331,12 +337,15 @@ type RoutingRule struct {
 // Filter types for list queries.
 
 type AlertFilter struct {
-	Status    string `json:"status,omitempty"`
-	ServiceID string `json:"service_id,omitempty"`
-	GroupKey  string `json:"group_key,omitempty"`
-	Search    string `json:"search,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
-	Offset    int    `json:"offset,omitempty"`
+	Status        string     `json:"status,omitempty"`
+	ServiceID     string     `json:"service_id,omitempty"`
+	GroupKey      string     `json:"group_key,omitempty"`
+	Source        string     `json:"source,omitempty"`
+	Search        string     `json:"search,omitempty"`
+	CreatedAfter  *time.Time `json:"created_after,omitempty"`
+	CreatedBefore *time.Time `json:"created_before,omitempty"`
+	Limit         int        `json:"limit,omitempty"`
+	Offset        int        `json:"offset,omitempty"`
 }
 
 type IncidentFilter struct {
