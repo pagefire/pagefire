@@ -9,7 +9,7 @@ require (
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/google/uuid v1.6.0
 	github.com/knadh/koanf/providers/env v1.1.0
-	github.com/knadh/koanf/v2 v2.3.3
+	github.com/knadh/koanf/v2 v2.3.4
 	github.com/pressly/goose/v3 v3.27.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/term v0.40.0
